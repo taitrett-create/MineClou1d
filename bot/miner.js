@@ -378,7 +378,7 @@ function startBot(io, config) {
             port,
             username,
             auth: 'offline',
-            version: '26.3'
+            version: '1.21.3'
         });
 
         bot = currentBot;
@@ -605,3 +605,4 @@ module.exports = {
     releaseMouseActions
 
 };
+
