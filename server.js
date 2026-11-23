@@ -19,7 +19,6 @@ const io = new Server(server, {
     transports: ['polling', 'websocket']
 });
 
-// Прокси для Minecraft Viewer
 const viewerProxy = httpProxy.createProxyServer({
     target: 'http://127.0.0.1:3007',
     ws: true,
@@ -39,14 +38,14 @@ viewerProxy.on('error', (error, req, res) => {
 
 app.use(express.json());
 
-// Viewer должен идти через основной адрес Render
+// Minecraft Viewer через Render
 app.use('/viewer', (req, res) => {
     viewerProxy.web(req, res, {
         target: 'http://127.0.0.1:3007'
     });
 });
 
-// Статические файлы сайта
+// Статические файлы
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Проверка сервера
@@ -54,7 +53,7 @@ app.get('/health', (req, res) => {
     res.json({
         online: true,
         name: 'MineCloud',
-        viewer: 'http://127.0.0.1:3007'
+        viewer: '/viewer/'
     });
 });
 
@@ -148,7 +147,7 @@ io.on('connection', socket => {
     });
 });
 
-// WebSocket-прокси для Viewer
+// WebSocket для 3D Viewer
 server.on('upgrade', (req, socket, head) => {
     if (req.url.startsWith('/viewer')) {
         req.url = req.url.replace(/^\/viewer/, '') || '/';
