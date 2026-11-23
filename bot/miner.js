@@ -13,6 +13,7 @@ let viewerStarting = false;
 let viewerBot = null;
 
 let starting = false;
+let loadedChunks = 0;
 
 let status = {
     online: false,
@@ -30,9 +31,7 @@ let lookState = {
 };
 
 function emit(event, data) {
-    if (io) {
-        io.emit(event, data);
-    }
+    if (io) io.emit(event, data);
 }
 
 function log(message) {
@@ -83,12 +82,8 @@ function closeViewer(target) {
     try {
         if (target.viewer &&
             typeof target.viewer.close === 'function') {
-
             target.viewer.close();
             log('3D Viewer закрыт.');
-
-        } else {
-            log('Не удалось найти экземпляр Viewer для закрытия.');
         }
     } catch (error) {
         log('Ошибка закрытия Viewer: ' + error.message);
@@ -117,7 +112,6 @@ function startViewerForBot(target) {
         viewerStarting = false;
 
         log('3D Viewer запущен на порту ' + VIEWER_PORT + '.');
-
     } catch (error) {
         viewerStarted = false;
         viewerStarting = false;
@@ -146,12 +140,12 @@ function startBot(options, socketIO) {
 
     if (!host || !Number.isInteger(port) ||
         port < 1 || port > 65535) {
-
         log('Укажи правильный IP и порт сервера.');
         return;
     }
 
     starting = true;
+    loadedChunks = 0;
 
     log(`Подключение к ${host}:${port}...`);
 
@@ -170,12 +164,10 @@ function startBot(options, socketIO) {
             if (bot !== newBot) return;
 
             starting = false;
-
             status.online = true;
             status.username = username;
 
             emit('status', status);
-
             log('Бот успешно вошёл на сервер.');
         });
 
@@ -183,9 +175,30 @@ function startBot(options, socketIO) {
             if (bot !== newBot) return;
 
             log('Бот появился в мире.');
+            log('Ожидание загрузки чанков...');
 
             updateInventory();
             startViewerForBot(newBot);
+        });
+
+        // Отслеживание загрузки чанков
+        newBot.on('chunkColumnLoad', (point) => {
+            if (bot !== newBot) return;
+
+            loadedChunks++;
+
+            log(
+                `Получен чанк #${loadedChunks}: X=${point.x}, Z=${point.z}`
+            );
+        });
+
+        // Отслеживание выгрузки чанков
+        newBot.on('chunkColumnUnload', (point) => {
+            if (bot !== newBot) return;
+
+            log(
+                `Выгружен чанк: X=${point.x}, Z=${point.z}`
+            );
         });
 
         newBot.on('health', () => {
@@ -198,15 +211,11 @@ function startBot(options, socketIO) {
         });
 
         newBot.on('inventoryUpdate', () => {
-            if (bot === newBot) {
-                updateInventory();
-            }
+            if (bot === newBot) updateInventory();
         });
 
         newBot.on('heldItemChanged', () => {
-            if (bot === newBot) {
-                updateInventory();
-            }
+            if (bot === newBot) updateInventory();
         });
 
         newBot.on('move', () => {
@@ -242,13 +251,12 @@ function startBot(options, socketIO) {
 
             status.online = false;
             status.username = '';
-
             inventory = [];
 
             emit('status', status);
             emit('inventory', getInventory());
 
-            log('Бот отключился.');
+            log(`Бот отключился. Всего получено чанков: ${loadedChunks}`);
         });
 
     } catch (error) {
@@ -274,7 +282,6 @@ function stopBot() {
 
     status.online = false;
     status.username = '';
-
     inventory = [];
 
     emit('status', status);
@@ -355,9 +362,7 @@ function attack() {
         entity.type === 'mob' || entity.type === 'player'
     );
 
-    if (entity) {
-        bot.attack(entity);
-    }
+    if (entity) bot.attack(entity);
 }
 
 function selectSlot(slot) {
@@ -390,4 +395,3 @@ module.exports = {
     selectSlot,
     getBot
 };
-
