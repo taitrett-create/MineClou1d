@@ -21,7 +21,7 @@ let status = {
     username: '',
     health: 20,
     food: 20,
-    version: false
+    version: '26.3'
 };
 
 let inventory = [];
@@ -508,3 +508,4 @@ module.exports = {
     selectSlot,
     getBot
 };
+
