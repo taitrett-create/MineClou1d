@@ -19,8 +19,10 @@ const io = new Server(server, {
     transports: ['polling', 'websocket']
 });
 
+const VIEWER_TARGET = 'http://127.0.0.1:3007';
+
 const viewerProxy = httpProxy.createProxyServer({
-    target: 'http://127.0.0.1:3007',
+    target: VIEWER_TARGET,
     ws: true,
     changeOrigin: true
 });
@@ -30,23 +32,21 @@ viewerProxy.on('error', (error, req, res) => {
 
     if (res && !res.headersSent) {
         res.writeHead(502, {
-            'Content-Type': 'text/plain'
+            'Content-Type': 'text/plain; charset=utf-8'
         });
+
         res.end('Minecraft Viewer is not running.');
     }
 });
 
 app.use(express.json());
 
-// Minecraft Viewer через Render
+// Viewer через /viewer/
 app.use('/viewer', (req, res) => {
     viewerProxy.web(req, res, {
-        target: 'http://127.0.0.1:3007'
+        target: VIEWER_TARGET
     });
 });
-
-// Статические файлы
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Проверка сервера
 app.get('/health', (req, res) => {
@@ -56,6 +56,35 @@ app.get('/health', (req, res) => {
         viewer: '/viewer/'
     });
 });
+
+// Остальные запросы к ресурсам Viewer.
+// Нужны для файлов, которые Viewer запрашивает от корня.
+const viewerResources = [
+    '/bundle.js',
+    '/favicon.ico',
+    '/textures',
+    '/worker',
+    '/socket',
+    '/ws',
+    '/chunks'
+];
+
+app.use((req, res, next) => {
+    const isViewerResource = viewerResources.some(prefix =>
+        req.path === prefix || req.path.startsWith(prefix + '/')
+    );
+
+    if (isViewerResource) {
+        return viewerProxy.web(req, res, {
+            target: VIEWER_TARGET
+        });
+    }
+
+    next();
+});
+
+// Статические файлы сайта
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Главная страница
 app.get('/', (req, res) => {
@@ -147,15 +176,28 @@ io.on('connection', socket => {
     });
 });
 
-// WebSocket для 3D Viewer
+// WebSocket Viewer
 server.on('upgrade', (req, socket, head) => {
-    if (req.url.startsWith('/viewer')) {
-        req.url = req.url.replace(/^\/viewer/, '') || '/';
+    const url = req.url || '/';
+
+    if (
+        url.startsWith('/viewer/') ||
+        url === '/viewer' ||
+        url.startsWith('/ws') ||
+        url.startsWith('/socket')
+    ) {
+        if (url.startsWith('/viewer')) {
+            req.url = url.replace(/^\/viewer/, '') || '/';
+        }
 
         viewerProxy.ws(req, socket, head, {
-            target: 'http://127.0.0.1:3007'
+            target: VIEWER_TARGET
         });
+
+        return;
     }
+
+    // Остальные WebSocket-запросы оставляем Socket.IO.
 });
 
 server.on('error', error => {
