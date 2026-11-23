@@ -4,7 +4,6 @@ const { mineflayer: startViewer } = require('prismarine-viewer');
 const { Vec3 } = require('vec3');
 
 const VIEWER_PORT = 3007;
-const MINECRAFT_VERSION = '26.3';
 
 let bot = null;
 let io = null;
@@ -47,9 +46,7 @@ function stringify(value) {
 }
 
 function emit(event, data) {
-    if (io) {
-        io.emit(event, data);
-    }
+    if (io) io.emit(event, data);
 }
 
 function log(message) {
@@ -155,7 +152,9 @@ function startBot(options, socketIO) {
 
     const host = String(options.host || '').trim();
     const port = Number(options.port);
-    const username = String(options.username || 'MineCloud_Bot').trim();
+    const username = String(
+        options.username || 'MineCloud_Bot'
+    ).trim();
 
     if (!host || !Number.isInteger(port) ||
         port < 1 || port > 65535) {
@@ -171,6 +170,7 @@ function startBot(options, socketIO) {
     status.username = '';
     status.health = 20;
     status.food = 20;
+    status.version = false;
 
     inventory = [];
 
@@ -178,22 +178,22 @@ function startBot(options, socketIO) {
     emit('inventory', getInventory());
 
     log(`Запуск бота: ${host}:${port}`);
-    log(`Версия протокола: ${MINECRAFT_VERSION}`);
+    log('Версия протокола: автоматическое определение');
     log(`Ник: ${username}`);
     log('Подключение к Minecraft...');
 
     try {
-        // ВАЖНО: прямое подключение, без предварительной TCP-проверки
         const newBot = mineflayer.createBot({
-            host: host,
-            port: port,
-            username: username,
+            host,
+            port,
+            username,
             auth: 'offline',
-            version: MINECRAFT_VERSION
+
+            // Автоматическое определение версии сервера
+            version: false
         });
 
         bot = newBot;
-
         newBot._minecloudStage = 'создание соединения';
 
         connectionTimer = setTimeout(() => {
@@ -203,7 +203,6 @@ function startBot(options, socketIO) {
             log('Последний этап: ' + newBot._minecloudStage);
         }, 30000);
 
-        // Сетевые события
         if (newBot._client) {
             newBot._client.on('connect', () => {
                 if (bot !== newBot) return;
@@ -233,12 +232,10 @@ function startBot(options, socketIO) {
             });
         }
 
-        // Успешная авторизация
         newBot.on('login', () => {
             if (bot !== newBot) return;
 
             newBot._minecloudStage = 'login выполнен';
-
             starting = false;
 
             status.online = true;
@@ -250,11 +247,9 @@ function startBot(options, socketIO) {
             }
 
             emit('status', status);
-
             log('УСПЕХ: бот вошёл на сервер!');
         });
 
-        // Появление в мире
         newBot.once('spawn', () => {
             if (bot !== newBot) return;
 
@@ -269,7 +264,6 @@ function startBot(options, socketIO) {
             startViewerForBot(newBot);
         });
 
-        // Загрузка чанков
         newBot.on('chunkColumnLoad', point => {
             if (bot !== newBot) return;
 
@@ -288,7 +282,6 @@ function startBot(options, socketIO) {
             log(`Выгружен чанк: X=${point.x}, Z=${point.z}`);
         });
 
-        // Здоровье и голод
         newBot.on('health', () => {
             if (bot !== newBot) return;
 
@@ -298,20 +291,14 @@ function startBot(options, socketIO) {
             emit('status', status);
         });
 
-        // Инвентарь
         newBot.on('inventoryUpdate', () => {
-            if (bot === newBot) {
-                updateInventory();
-            }
+            if (bot === newBot) updateInventory();
         });
 
         newBot.on('heldItemChanged', () => {
-            if (bot === newBot) {
-                updateInventory();
-            }
+            if (bot === newBot) updateInventory();
         });
 
-        // Положение и поворот
         newBot.on('move', () => {
             if (bot !== newBot || !newBot.entity) return;
 
@@ -327,7 +314,6 @@ function startBot(options, socketIO) {
             });
         });
 
-        // Ошибки и отключение
         newBot.on('kicked', reason => {
             if (bot !== newBot) return;
 
@@ -354,15 +340,12 @@ function startBot(options, socketIO) {
 
             closeViewer(newBot);
 
-            if (bot === newBot) {
-                bot = null;
-            }
+            if (bot === newBot) bot = null;
 
             starting = false;
 
             status.online = false;
             status.username = '';
-
             inventory = [];
 
             emit('status', status);
@@ -491,9 +474,7 @@ function attack() {
         entity.type === 'mob' || entity.type === 'player'
     );
 
-    if (entity) {
-        bot.attack(entity);
-    }
+    if (entity) bot.attack(entity);
 }
 
 function selectSlot(slot) {
@@ -527,4 +508,3 @@ module.exports = {
     selectSlot,
     getBot
 };
-
