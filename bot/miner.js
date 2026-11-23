@@ -22,7 +22,7 @@ let status = {
     username: '',
     health: 20,
     food: 20,
-    version: MINECRAFT_VERSION
+    version: false
 };
 
 let inventory = [];
@@ -527,3 +527,4 @@ module.exports = {
     selectSlot,
     getBot
 };
+
