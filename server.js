@@ -2,14 +2,14 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const httpProxy = require('http-proxy');
 const miner = require('./bot/miner');
 
-const app = express();
+// ========================================
 // MINECLOUD DIAGNOSTICS
-const fs = require('fs');
-const path = require('path');
+// ========================================
 
 function showPackageVersion(packageName) {
     try {
@@ -20,7 +20,9 @@ function showPackageVersion(packageName) {
             const packageFile = path.join(folder, 'package.json');
 
             if (fs.existsSync(packageFile)) {
-                const data = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
+                const data = JSON.parse(
+                    fs.readFileSync(packageFile, 'utf8')
+                );
 
                 if (data.name === packageName) {
                     console.log(
@@ -32,13 +34,19 @@ function showPackageVersion(packageName) {
             }
 
             const parent = path.dirname(folder);
+
             if (parent === folder) break;
+
             folder = parent;
         }
 
-        console.log(`[DIAGNOSTICS] ${packageName}: версия не найдена`);
+        console.log(
+            `[DIAGNOSTICS] ${packageName}: версия не найдена`
+        );
     } catch (error) {
-        console.log(`[DIAGNOSTICS] ${packageName}: НЕ НАЙДЕН`);
+        console.log(
+            `[DIAGNOSTICS] ${packageName}: НЕ НАЙДЕН`
+        );
     }
 }
 
@@ -50,6 +58,12 @@ showPackageVersion('minecraft-protocol');
 showPackageVersion('prismarine-viewer');
 
 console.log('===========================================');
+
+// ========================================
+// SERVER
+// ========================================
+
+const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -62,17 +76,19 @@ const io = new Server(server, {
     transports: ['polling', 'websocket']
 });
 
+// ========================================
+// VIEWER PROXY
+// ========================================
+
 const viewerProxy = httpProxy.createProxyServer({
     target: 'http://127.0.0.1:3007',
     ws: true,
     changeOrigin: true
 });
 
-// Исправленный обработчик ошибок Viewer
 viewerProxy.on('error', (error, req, res) => {
     console.error('[VIEWER PROXY]', error.message);
 
-    // Обычный HTTP-запрос
     if (res && typeof res.writeHead === 'function') {
         if (!res.headersSent) {
             res.writeHead(502, {
@@ -87,25 +103,25 @@ viewerProxy.on('error', (error, req, res) => {
         return;
     }
 
-    // WebSocket-соединение
     if (res && typeof res.destroy === 'function') {
         res.destroy();
     }
 });
 
+// ========================================
+// EXPRESS
+// ========================================
+
 app.use(express.json());
 
-// Minecraft Viewer
 app.use('/viewer', (req, res) => {
     viewerProxy.web(req, res, {
         target: 'http://127.0.0.1:3007'
     });
 });
 
-// Статические файлы
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Проверка сервера
 app.get('/health', (req, res) => {
     res.json({
         online: true,
@@ -114,15 +130,24 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Главная страница
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(
+        path.join(__dirname, 'public', 'index.html')
+    );
 });
+
+// ========================================
+// LOGGING
+// ========================================
 
 function log(message) {
     console.log('[MineCloud]', message);
     io.emit('log', message);
 }
+
+// ========================================
+// SOCKET.IO
+// ========================================
 
 io.on('connection', socket => {
     log('Новое подключение к сайту: ' + socket.id);
@@ -131,20 +156,32 @@ io.on('connection', socket => {
     socket.emit('inventory', miner.getInventory());
     socket.emit('look', miner.getLookState());
 
+    // START BOT
     function startBot(data = {}) {
         const options = {
             host: data.host || data.ip || data.serverIP,
             port: Number(data.port || data.serverPort),
-            username: data.username || data.nick ||
-                data.nickname || 'MineCloudBot'
+            username:
+                data.username ||
+                data.nick ||
+                data.nickname ||
+                'MineCloudBot'
         };
 
         if (!options.host || !options.port) {
-            socket.emit('log', 'Ошибка: укажи IP и порт сервера.');
+            socket.emit(
+                'log',
+                'Ошибка: укажи IP и порт сервера.'
+            );
             return;
         }
 
-        log('Запуск бота: ' + options.host + ':' + options.port);
+        log(
+            'Запуск бота: ' +
+            options.host +
+            ':' +
+            options.port
+        );
 
         miner.startBot(options, io);
     }
@@ -153,6 +190,7 @@ io.on('connection', socket => {
     socket.on('startBot', startBot);
     socket.on('bot:start', startBot);
 
+    // STOP BOT
     function stopBot() {
         miner.stopBot();
         log('Команда остановки бота.');
@@ -162,6 +200,7 @@ io.on('connection', socket => {
     socket.on('stopBot', stopBot);
     socket.on('bot:stop', stopBot);
 
+    // MOVEMENT
     socket.on('move', data => {
         if (typeof data === 'string') {
             miner.move(data, true);
@@ -180,6 +219,7 @@ io.on('connection', socket => {
         }
     });
 
+    // CAMERA
     socket.on('look', data => {
         if (!data) return;
 
@@ -189,33 +229,57 @@ io.on('connection', socket => {
         );
     });
 
-    socket.on('breakBlock', () => miner.breakBlock());
-    socket.on('break', () => miner.breakBlock());
+    // BLOCKS
+    socket.on('breakBlock', () => {
+        miner.breakBlock();
+    });
 
-    socket.on('placeBlock', () => miner.placeBlock());
-    socket.on('place', () => miner.placeBlock());
+    socket.on('break', () => {
+        miner.breakBlock();
+    });
 
-    socket.on('attack', () => miner.attack());
+    socket.on('placeBlock', () => {
+        miner.placeBlock();
+    });
 
+    socket.on('place', () => {
+        miner.placeBlock();
+    });
+
+    // ATTACK
+    socket.on('attack', () => {
+        miner.attack();
+    });
+
+    // INVENTORY
     socket.on('selectSlot', slot => {
         miner.selectSlot(slot);
     });
 
+    // DISCONNECT
     socket.on('disconnect', reason => {
         log('Отключение сайта: ' + reason);
     });
 });
 
-// WebSocket для Viewer
+// ========================================
+// VIEWER WEBSOCKET
+// ========================================
+
 server.on('upgrade', (req, socket, head) => {
     if (req.url.startsWith('/viewer')) {
-        req.url = req.url.replace(/^\/viewer/, '') || '/';
+        req.url =
+            req.url.replace(/^\/viewer/, '') || '/';
 
         viewerProxy.ws(req, socket, head, {
             target: 'http://127.0.0.1:3007'
         });
     }
 });
+
+// ========================================
+// ERROR HANDLING
+// ========================================
 
 server.on('error', error => {
     console.error('[SERVER ERROR]', error);
@@ -229,6 +293,10 @@ process.on('unhandledRejection', error => {
     console.error('[UNHANDLED REJECTION]', error);
 });
 
+// ========================================
+// START
+// ========================================
+
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -237,4 +305,3 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('       PORT: ' + PORT);
     console.log('================================');
 });
-
