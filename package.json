@@ -1,10 +1,9 @@
 {
   "name": "minecloud",
   "version": "1.0.0",
-  "description": "",
+  "description": "MineCloud Minecraft Bot Viewer",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
   },
   "keywords": [],
@@ -12,7 +11,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@wp2508/mineflayer": "^4.42.10",
+    "@wp2508/mineflayer": "4.42.10",
     "canvas": "^3.2.3",
     "express": "^5.3.0",
     "prismarine-viewer": "^1.33.0",
