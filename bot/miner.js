@@ -1,497 +1,593 @@
-
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
-const { Vec3 } = require('vec3');
-
-const VIEWER_PORT = 3007;
+const Vec3 = require('vec3');
 
 let bot = null;
-let io = null;
-let starting = false;
-
+let state = 'offline';
+let message = 'Бот не запущен';
 let viewerStarted = false;
-let viewerBot = null;
 
-let connectionTimer = null;
-let loadedChunks = 0;
-let chunkPackets = 0;
+const allowedControls = [
+    'forward',
+    'back',
+    'left',
+    'right',
+    'jump',
+    'sprint',
+    'sneak'
+];
 
-let status = {
-    online: false,
-    username: '',
-    health: 20,
-    food: 20,
-    version: '26.3'
+const mousePressed = {
+    left: false,
+    right: false
 };
 
-let inventory = [];
-
-let lookState = {
-    yaw: 0,
-    pitch: 0
+const mouseLoops = {
+    left: false,
+    right: false
 };
 
-function stringify(value) {
-    if (value === undefined || value === null) {
-        return 'причина не указана';
-    }
+let lastMouseError = 0;
 
-    try {
-        return typeof value === 'string'
-            ? value
-            : JSON.stringify(value);
-    } catch {
-        return String(value);
-    }
+function log(io, text) {
+    const entry = `[${new Date().toLocaleTimeString()}] ${text}`;
+
+    console.log('[MineCloud]', entry);
+
+    if (io) io.emit('log', entry);
 }
 
-function emit(event, data) {
-    if (io) io.emit(event, data);
-}
+function update(io, newState, newMessage) {
+    state = newState;
+    message = newMessage;
 
-function log(message) {
-    console.log('[MineCloud]', message);
-    emit('log', message);
+    log(io, newMessage);
+
+    if (io) {
+        io.emit('status', {
+            online: state === 'online',
+            state,
+            message
+        });
+    }
 }
 
 function getStatus() {
-    return status;
-}
-
-function getInventory() {
     return {
-        slots: inventory,
-        selected: bot ? bot.quickBarSlot : 0,
-        heldItem: bot && bot.heldItem ? {
-            name: bot.heldItem.name,
-            displayName: bot.heldItem.displayName,
-            count: bot.heldItem.count
-        } : null
+        online: state === 'online',
+        state,
+        message
     };
 }
 
 function getLookState() {
-    return lookState;
+    if (!bot || !bot.entity) return null;
+
+    return {
+        yaw: bot.entity.yaw,
+        pitch: bot.entity.pitch
+    };
 }
 
-function updateInventory() {
-    if (!bot || !bot.inventory) return;
+function getVitals() {
+    if (!bot || state !== 'online') {
+        return {
+            health: 0,
+            food: 0,
+            maxHealth: 20,
+            maxFood: 20
+        };
+    }
 
-    inventory = bot.inventory.slots.map((item, slot) => {
+    return {
+        health: Number(bot.health) || 0,
+        food: Number(bot.food) || 0,
+        maxHealth: 20,
+        maxFood: 20
+    };
+}
+
+function sendVitals(io) {
+    if (io) io.emit('vitals', getVitals());
+}
+
+function getInventory() {
+    if (!bot || !bot.inventory) {
+        return {
+            slots: [],
+            selected: 0,
+            heldItem: null
+        };
+    }
+
+    const slots = bot.inventory.slots.map((item, slot) => {
         if (!item) return null;
 
         return {
             slot,
             name: item.name,
-            displayName: item.displayName,
+            displayName: item.displayName || item.name,
             count: item.count
         };
     });
 
-    emit('inventory', getInventory());
+    const held = bot.heldItem;
+
+    return {
+        slots,
+        selected: bot.quickBarSlot || 0,
+        heldItem: held ? {
+            name: held.name,
+            displayName: held.displayName || held.name,
+            count: held.count
+        } : null
+    };
 }
 
-function closeViewer(target) {
-    if (!target || viewerBot !== target) return;
+function sendInventory(io) {
+    if (io) io.emit('inventory', getInventory());
+}
 
+function closeViewer(currentBot, io) {
     try {
-        if (target.viewer &&
-            typeof target.viewer.close === 'function') {
-            target.viewer.close();
-            log('Viewer закрыт.');
+        if (
+            currentBot &&
+            currentBot.viewer &&
+            typeof currentBot.viewer.close === 'function'
+        ) {
+            currentBot.viewer.close();
+            log(io, '3D-просмотрщик остановлен');
         }
     } catch (error) {
-        log('Ошибка закрытия Viewer: ' + error.message);
+        log(io, 'Ошибка закрытия просмотрщика: ' + error.message);
     }
 
     viewerStarted = false;
-    viewerBot = null;
 }
 
-function startViewerForBot(target) {
-    if (!target || bot !== target || viewerStarted) return;
+function releaseMouseActions() {
+    mousePressed.left = false;
+    mousePressed.right = false;
 
-    viewerStarted = true;
-    viewerBot = target;
+    if (bot) {
+        try {
+            bot.stopDigging();
+            bot.deactivateItem();
+        } catch (error) {}
+    }
+}
 
-    log('Запуск 3D Viewer...');
+function setMouseAction(button, pressed, io) {
+    if (!['left', 'right'].includes(button)) return;
+    if (!bot || state !== 'online') return;
+
+    mousePressed[button] = Boolean(pressed);
+
+    if (!pressed && button === 'left') {
+        try {
+            bot.stopDigging();
+        } catch (error) {}
+    }
+
+    if (pressed && !mouseLoops[button]) {
+        runMouseLoop(button, bot, io);
+    }
+}
+
+function getTargetEntity(currentBot) {
+    try {
+        if (typeof currentBot.entityAtCursor === 'function') {
+            return currentBot.entityAtCursor(5);
+        }
+    } catch (error) {}
+
+    return null;
+}
+
+function isInteractiveBlock(block) {
+    if (!block) return false;
+
+    const name = block.name.toLowerCase();
+
+    return (
+        /chest|barrel|shulker_box|furnace|smoker|blast_furnace/.test(name) ||
+        /crafting_table|anvil|enchanting_table|brewing_stand/.test(name) ||
+        /door|trapdoor|fence_gate|button|lever/.test(name) ||
+        /lectern|loom|cartography_table|grindstone|stonecutter/.test(name) ||
+        /beehive|bee_nest|note_block|jukebox/.test(name) ||
+        /hopper|dispenser|dropper|bell|composter/.test(name)
+    );
+}
+
+async function leftClick(currentBot) {
+    if (!currentBot.entity) return;
+
+    const entity = getTargetEntity(currentBot);
+
+    if (entity && entity !== currentBot.entity) {
+        currentBot.attack(entity);
+
+        try {
+            currentBot.swingArm('right');
+        } catch (error) {}
+
+        await new Promise(resolve => setTimeout(resolve, 450));
+        return;
+    }
+
+    const block = currentBot.blockAtCursor(5);
+
+    if (!block || block.name === 'air') {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return;
+    }
 
     try {
-        Promise.resolve(startViewer(target, {
-            port: VIEWER_PORT,
-            firstPerson: true,
-            viewDistance: 2
-        }))
-        .then(() => {
-            if (bot === target) {
-                log('Viewer запущен на порту ' + VIEWER_PORT);
-            }
-        })
-        .catch(error => {
-            viewerStarted = false;
-            viewerBot = null;
-
-            log('Ошибка Viewer: ' + (error.stack || error.message));
-        });
+        await currentBot.dig(block);
     } catch (error) {
-        viewerStarted = false;
-        viewerBot = null;
-
-        log('Ошибка запуска Viewer: ' + (error.stack || error.message));
+        // Блок мог исчезнуть или бот мог прекратить копание.
     }
 }
 
-function startBot(options, socketIO) {
-    if (starting || bot) {
-        log('Бот уже запускается или подключён.');
+async function rightClick(currentBot) {
+    if (!currentBot.entity) return;
+
+    const entity = getTargetEntity(currentBot);
+
+    if (entity && entity !== currentBot.entity) {
+        try {
+            if (typeof currentBot.activateEntity === 'function') {
+                await currentBot.activateEntity(entity);
+            } else {
+                currentBot.activateItem();
+            }
+        } catch (error) {}
+
+        await new Promise(resolve => setTimeout(resolve, 300));
         return;
     }
 
-    io = socketIO || io;
-    options = options || {};
+    const block = currentBot.blockAtCursor(5);
+    const heldItem = currentBot.heldItem;
 
-    const host = String(options.host || '').trim();
-    const port = Number(options.port);
-    const username = String(
-        options.username || 'MineCloud_Bot'
-    ).trim();
+    if (!block || block.name === 'air') {
+        try {
+            currentBot.activateItem();
+        } catch (error) {}
 
-    if (!host || !Number.isInteger(port) ||
-        port < 1 || port > 65535) {
-        log('Неправильный IP или порт.');
+        await new Promise(resolve => setTimeout(resolve, 300));
         return;
     }
-
-    starting = true;
-    loadedChunks = 0;
-    chunkPackets = 0;
-
-    status.online = false;
-    status.username = '';
-    status.health = 20;
-    status.food = 20;
-    status.version = false;
-
-    inventory = [];
-
-    emit('status', status);
-    emit('inventory', getInventory());
-
-    log(`Запуск бота: ${host}:${port}`);
-    log('Версия протокола: автоматическое определение');
-    log(`Ник: ${username}`);
-    log('Подключение к Minecraft...');
 
     try {
-        const newBot = mineflayer.createBot({
+        // Сундуки, двери, верстаки, кнопки и другие интерактивные блоки.
+        if (isInteractiveBlock(block)) {
+            await currentBot.activateBlock(block);
+        }
+        // Если в руке блок — пытаемся поставить его.
+        else if (
+            heldItem &&
+            currentBot.registry &&
+            currentBot.registry.blocksByName[heldItem.name]
+        ) {
+            await currentBot.placeBlock(block, new Vec3(0, 1, 0));
+        }
+        // Еда, лук, инструменты и прочие предметы.
+        else if (heldItem) {
+            try {
+                await currentBot.activateBlock(block);
+            } catch (error) {}
+
+            currentBot.activateItem();
+        } else {
+            await currentBot.activateBlock(block);
+        }
+
+        try {
+            currentBot.swingArm('right');
+        } catch (error) {}
+    } catch (error) {
+        // Например, если место установки занято.
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300));
+}
+
+async function runMouseLoop(button, currentBot, io) {
+    if (mouseLoops[button]) return;
+
+    mouseLoops[button] = true;
+
+    try {
+        while (
+            bot === currentBot &&
+            state === 'online' &&
+            mousePressed[button]
+        ) {
+            try {
+                if (button === 'left') {
+                    await leftClick(currentBot);
+                } else {
+                    await rightClick(currentBot);
+                }
+            } catch (error) {
+                const now = Date.now();
+
+                if (now - lastMouseError > 3000) {
+                    lastMouseError = now;
+                    log(io, 'Ошибка действия мыши: ' + error.message);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+        }
+    } finally {
+        mouseLoops[button] = false;
+
+        // Если кнопку нажали снова, пока предыдущий цикл завершался.
+        if (
+            bot === currentBot &&
+            state === 'online' &&
+            mousePressed[button]
+        ) {
+            runMouseLoop(button, currentBot, io);
+        }
+    }
+}
+
+function startBot(io, config) {
+    if (bot) {
+        return {
+            success: false,
+            message: 'Бот уже подключается или запущен'
+        };
+    }
+
+    config = config || {};
+
+    const host = String(config.host || '').trim();
+    const username = String(config.username || '').trim();
+    const port = Number(config.port);
+
+    if (!host || !username) {
+        return {
+            success: false,
+            message: 'Заполни IP и ник'
+        };
+    }
+
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return {
+            success: false,
+            message: 'Неправильный порт'
+        };
+    }
+
+    if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
+        return {
+            success: false,
+            message: 'Неправильный ник'
+        };
+    }
+
+    update(io, 'connecting', `Подключаемся к ${host}:${port}...`);
+
+    try {
+        const currentBot = mineflayer.createBot({
             host,
             port,
             username,
             auth: 'offline',
-
-            // Автоматическое определение версии сервера
-            version: false
+            version: '1.21.4'
         });
 
-        bot = newBot;
-        newBot._minecloudStage = 'создание соединения';
+        bot = currentBot;
+        viewerStarted = false;
 
-        connectionTimer = setTimeout(() => {
-            if (bot !== newBot || status.online) return;
+        mousePressed.left = false;
+        mousePressed.right = false;
 
-            log('ВНИМАНИЕ: вход занимает больше 30 секунд.');
-            log('Последний этап: ' + newBot._minecloudStage);
-        }, 30000);
+        currentBot.once('login', () => {
+            if (bot !== currentBot) return;
 
-        if (newBot._client) {
-            newBot._client.on('connect', () => {
-                if (bot !== newBot) return;
+            update(io, 'online', 'Бот вошёл на сервер!');
+        });
 
-                newBot._minecloudStage = 'TCP соединение установлено';
-                log('TCP соединение установлено.');
-            });
+        currentBot.once('spawn', () => {
+            if (bot !== currentBot) return;
 
-            newBot._client.on('error', error => {
-                if (bot !== newBot) return;
+            update(io, 'online', 'Бот появился в мире!');
 
-                log('Ошибка сетевого клиента: ' + error.message);
-            });
+            if (!viewerStarted) {
+                viewerStarted = true;
 
-            newBot._client.on('packet', (data, meta) => {
-                if (bot !== newBot || !meta) return;
+                try {
+                    startViewer(currentBot, {
+                        port: 3007,
+                        firstPerson: true,
+                        viewDistance: 6
+                    });
 
-                const packetName = meta.name || '';
-
-                if (/chunk/i.test(packetName)) {
-                    chunkPackets++;
-
-                    if (chunkPackets <= 10 || chunkPackets % 20 === 0) {
-                        log(`Пакет чанка #${chunkPackets}: ${packetName}`);
-                    }
+                    log(io, '3D-просмотрщик запущен на порту 3007');
+                } catch (error) {
+                    viewerStarted = false;
+                    log(io, 'Ошибка просмотрщика: ' + error.message);
                 }
+            }
+
+            sendInventory(io);
+            sendVitals(io);
+
+            const look = getLookState();
+            if (look) io.emit('lookState', look);
+
+            currentBot.inventory.on('updateSlot', () => {
+                if (bot === currentBot) sendInventory(io);
             });
-        }
 
-        newBot.on('login', () => {
-            if (bot !== newBot) return;
-
-            newBot._minecloudStage = 'login выполнен';
-            starting = false;
-
-            status.online = true;
-            status.username = username;
-
-            if (connectionTimer) {
-                clearTimeout(connectionTimer);
-                connectionTimer = null;
-            }
-
-            emit('status', status);
-            log('УСПЕХ: бот вошёл на сервер!');
-        });
-
-        newBot.once('spawn', () => {
-            if (bot !== newBot) return;
-
-            newBot._minecloudStage = 'spawn выполнен';
-
-            log('Бот появился в мире!');
-            log('Обновление инвентаря...');
-
-            updateInventory();
-
-            log('Запускаю Viewer...');
-            startViewerForBot(newBot);
-        });
-
-        newBot.on('chunkColumnLoad', point => {
-            if (bot !== newBot) return;
-
-            loadedChunks++;
-
-            if (loadedChunks <= 10 || loadedChunks % 20 === 0) {
-                log(
-                    `Загружен чанк #${loadedChunks}: X=${point.x}, Z=${point.z}`
-                );
-            }
-        });
-
-        newBot.on('chunkColumnUnload', point => {
-            if (bot !== newBot) return;
-
-            log(`Выгружен чанк: X=${point.x}, Z=${point.z}`);
-        });
-
-        newBot.on('health', () => {
-            if (bot !== newBot) return;
-
-            status.health = newBot.health;
-            status.food = newBot.food;
-
-            emit('status', status);
-        });
-
-        newBot.on('inventoryUpdate', () => {
-            if (bot === newBot) updateInventory();
-        });
-
-        newBot.on('heldItemChanged', () => {
-            if (bot === newBot) updateInventory();
-        });
-
-        newBot.on('move', () => {
-            if (bot !== newBot || !newBot.entity) return;
-
-            lookState = {
-                yaw: newBot.entity.yaw,
-                pitch: newBot.entity.pitch
-            };
-
-            emit('position', {
-                x: newBot.entity.position.x,
-                y: newBot.entity.position.y,
-                z: newBot.entity.position.z
+            currentBot.on('heldItemChanged', () => {
+                if (bot === currentBot) sendInventory(io);
             });
-        });
 
-        newBot.on('kicked', reason => {
-            if (bot !== newBot) return;
+            currentBot.on('health', () => {
+                if (bot === currentBot) sendVitals(io);
+            });
 
-            log('СЕРВЕР ОТКЛОНИЛ БОТА: ' + stringify(reason));
-        });
+            currentBot.on('food', () => {
+                if (bot === currentBot) sendVitals(io);
+            });
 
-        newBot.on('error', error => {
-            if (bot !== newBot) return;
-
-            log('ОШИБКА MINEFLAYER: ' + (error.stack || error.message));
-        });
-
-        newBot.once('end', reason => {
-            if (connectionTimer) {
-                clearTimeout(connectionTimer);
-                connectionTimer = null;
+            if (typeof currentBot.waitForChunksToLoad === 'function') {
+                currentBot.waitForChunksToLoad()
+                    .then(() => {
+                        if (bot === currentBot) {
+                            log(io, 'Чанки Minecraft загружены!');
+                        }
+                    })
+                    .catch(error => {
+                        if (bot === currentBot) {
+                            log(io, 'Ошибка чанков: ' + error.message);
+                        }
+                    });
             }
+        });
 
-            log('Соединение завершено: ' + stringify(reason));
+        currentBot.on('kicked', reason => {
+            if (bot !== currentBot) return;
 
-            log(
-                `Статистика: чанков=${loadedChunks}, пакетов=${chunkPackets}`
+            update(io, 'error', 'Сервер отклонил вход: ' + String(reason));
+        });
+
+        currentBot.on('error', error => {
+            if (bot !== currentBot) return;
+
+            update(io, 'error', 'Ошибка Minecraft: ' + error.message);
+        });
+
+        currentBot.once('end', reason => {
+            if (bot !== currentBot) return;
+
+            releaseMouseActions();
+            closeViewer(currentBot, io);
+
+            bot = null;
+
+            update(
+                io,
+                'offline',
+                'Соединение закрыто: ' + String(reason || '')
             );
 
-            closeViewer(newBot);
+            io.emit('inventory', {
+                slots: [],
+                selected: 0,
+                heldItem: null
+            });
 
-            if (bot === newBot) bot = null;
-
-            starting = false;
-
-            status.online = false;
-            status.username = '';
-            inventory = [];
-
-            emit('status', status);
-            emit('inventory', getInventory());
-
-            log('Бот отключился.');
+            sendVitals(io);
         });
 
+        return {
+            success: true,
+            message: 'Ожидаем подключения к серверу...'
+        };
     } catch (error) {
-        if (connectionTimer) {
-            clearTimeout(connectionTimer);
-            connectionTimer = null;
-        }
-
         bot = null;
-        starting = false;
+        viewerStarted = false;
 
-        log('ОШИБКА СОЗДАНИЯ БОТА: ' + (error.stack || error.message));
+        update(io, 'error', error.message);
+
+        return {
+            success: false,
+            message: error.message
+        };
     }
 }
 
-function stopBot() {
-    const oldBot = bot;
+function controlBot(control, pressed) {
+    if (!bot || state !== 'online') return;
+    if (!allowedControls.includes(control)) return;
 
-    bot = null;
-    starting = false;
-
-    if (connectionTimer) {
-        clearTimeout(connectionTimer);
-        connectionTimer = null;
-    }
-
-    if (!oldBot) {
-        status.online = false;
-        status.username = '';
-        inventory = [];
-
-        emit('status', status);
-        emit('inventory', getInventory());
-
-        log('Бот уже остановлен.');
-        return;
-    }
-
-    closeViewer(oldBot);
-
-    status.online = false;
-    status.username = '';
-    inventory = [];
-
-    emit('status', status);
-    emit('inventory', getInventory());
-
-    try {
-        oldBot.quit();
-    } catch (error) {
-        log('Ошибка остановки: ' + error.message);
-    }
-
-    log('Бот остановлен.');
+    bot.setControlState(control, Boolean(pressed));
 }
 
-function move(direction, enabled) {
-    if (!bot || !bot.entity) return;
+function lookBot(data) {
+    if (!bot || state !== 'online' || !bot.entity || !data) return;
 
-    const allowed = [
-        'forward',
-        'back',
-        'left',
-        'right',
-        'jump',
-        'sprint',
-        'sneak'
-    ];
+    const yaw = Number(data.yaw);
+    const pitch = Number(data.pitch);
 
-    if (!allowed.includes(direction)) return;
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
 
-    bot.setControlState(direction, Boolean(enabled));
+    const safePitch = Math.max(-1.5, Math.min(1.5, pitch));
+
+    bot.look(yaw, safePitch, true);
 }
 
-function look(yaw, pitch) {
-    if (!bot || !bot.entity) return;
-
-    const y = Number(yaw);
-    const p = Number(pitch);
-
-    if (!Number.isFinite(y) || !Number.isFinite(p)) return;
-
-    bot.look(y, p, true);
-}
-
-function breakBlock() {
-    if (!bot || !bot.entity) return;
-
-    const block = bot.blockAtCursor(5);
-
-    if (!block || block.name === 'air') return;
-    if (bot.targetDigBlock) return;
-
-    bot.dig(block).catch(error => {
-        log('Ошибка ломания блока: ' + error.message);
-    });
-}
-
-function placeBlock() {
-    if (!bot || !bot.entity) return;
-
-    const block = bot.blockAtCursor(5);
-
-    if (!block) return;
-
-    if (!bot.heldItem) {
-        log('В руке нет предмета для установки.');
-        return;
-    }
-
-    bot.placeBlock(block, new Vec3(0, 1, 0)).catch(error => {
-        log('Ошибка установки блока: ' + error.message);
-    });
-}
-
-function attack() {
-    if (!bot || !bot.entity) return;
-
-    const entity = bot.nearestEntity(entity =>
-        entity.type === 'mob' || entity.type === 'player'
-    );
-
-    if (entity) bot.attack(entity);
-}
-
-function selectSlot(slot) {
-    if (!bot) return;
+function selectSlot(slot, io) {
+    if (!bot || state !== 'online') return;
 
     const number = Number(slot);
 
-    if (!Number.isInteger(number) || number < 0 || number > 8) {
+    if (!Number.isInteger(number) || number < 0 || number > 8) return;
+
+    bot.setQuickBarSlot(number);
+    sendInventory(io);
+}
+
+function releaseControls() {
+    if (!bot) return;
+
+    try {
+        bot.clearControlStates();
+    } catch (error) {
+        console.log('Ошибка сброса управления:', error.message);
+    }
+}
+
+function stopBot(io) {
+    if (!bot) {
+        update(io, 'offline', 'Бот не подключён');
         return;
     }
 
-    bot.setQuickBarSlot(number);
-    updateInventory();
-}
+    const currentBot = bot;
 
-function getBot() {
-    return bot;
+    releaseMouseActions();
+    bot = null;
+
+    update(io, 'stopping', 'Отключаем бота...');
+
+    try {
+        currentBot.clearControlStates();
+    } catch (error) {}
+
+    closeViewer(currentBot, io);
+
+    try {
+        if (typeof currentBot.quit === 'function') {
+            currentBot.quit('MineCloud STOP');
+        } else if (typeof currentBot.end === 'function') {
+            currentBot.end();
+        }
+    } catch (error) {
+        log(io, 'Ошибка отключения: ' + error.message);
+    }
+
+    io.emit('inventory', {
+        slots: [],
+        selected: 0,
+        heldItem: null
+    });
+
+    io.emit('vitals', {
+        health: 0,
+        food: 0,
+        maxHealth: 20,
+        maxFood: 20
+    });
+
+    update(io, 'offline', 'Бот остановлен');
 }
 
 module.exports = {
@@ -499,13 +595,12 @@ module.exports = {
     stopBot,
     getStatus,
     getInventory,
+    getVitals,
     getLookState,
-    move,
-    look,
-    breakBlock,
-    placeBlock,
-    attack,
+    controlBot,
+    lookBot,
     selectSlot,
-    getBot
+    releaseControls,
+    setMouseAction,
+    releaseMouseActions
 };
-
