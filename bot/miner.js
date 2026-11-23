@@ -110,7 +110,7 @@ function startViewerForBot(target) {
         startViewer(target, {
             port: VIEWER_PORT,
             firstPerson: true,
-            viewDistance: 6
+            viewDistance: 2
         });
 
         viewerStarted = true;
@@ -390,3 +390,4 @@ module.exports = {
     selectSlot,
     getBot
 };
+
