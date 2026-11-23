@@ -1,10 +1,12 @@
 
 const mineflayer = require('@wp2508/mineflayer');
-const { mineflayer: viewer } = require('prismarine-viewer');
+const { mineflayer: startViewer } = require('prismarine-viewer');
+const { Vec3 } = require('vec3');
 
 let bot = null;
 let io = null;
 let viewerStarted = false;
+let starting = false;
 
 let status = {
     online: false,
@@ -15,6 +17,7 @@ let status = {
 };
 
 let inventory = [];
+
 let lookState = {
     yaw: 0,
     pitch: 0
@@ -22,6 +25,11 @@ let lookState = {
 
 function emit(event, data) {
     if (io) io.emit(event, data);
+}
+
+function log(message) {
+    console.log('[MineCloud]', message);
+    emit('log', message);
 }
 
 function getStatus() {
@@ -53,132 +61,206 @@ function updateInventory() {
     emit('inventory', inventory);
 }
 
-function startBot(options, socketIO) {
-    if (bot) {
-        stopBot();
+function closeViewer(target) {
+    if (!target) return;
+
+    try {
+        if (target.viewer && typeof target.viewer.close === 'function') {
+            target.viewer.close();
+            log('3D Viewer закрыт.');
+        }
+    } catch (error) {
+        log('Ошибка закрытия Viewer: ' + error.message);
     }
 
-    io = socketIO;
+    viewerStarted = false;
+}
+
+function startBot(options, socketIO) {
+    if (starting) {
+        log('Бот уже запускается.');
+        return;
+    }
+
+    if (bot) {
+        log('Сначала останови предыдущего бота.');
+        return;
+    }
+
+    io = socketIO || io;
 
     const host = options.host;
     const port = Number(options.port);
     const username = options.username || 'MineCloudBot';
 
     if (!host || !port) {
-        emit('log', 'Укажи IP и порт сервера.');
+        log('Укажи IP и порт сервера.');
         return;
     }
 
-    emit('log', `Подключение к ${host}:${port}...`);
+    starting = true;
+
+    log(`Подключение к ${host}:${port}...`);
 
     try {
-        bot = mineflayer.createBot({
+        const newBot = mineflayer.createBot({
             host,
             port,
             username,
             auth: 'offline',
-            version: '26.3',
-            hideErrors: false
+            version: '26.3'
         });
 
-        bot.once('login', () => {
+        bot = newBot;
+
+        newBot.once('login', () => {
+            starting = false;
+
             status.online = true;
             status.username = username;
 
             emit('status', status);
-            emit('log', 'Бот успешно вошёл на сервер.');
+            log('Бот успешно вошёл на сервер.');
         });
 
-        bot.once('spawn', () => {
-            emit('log', 'Бот появился в мире.');
+        newBot.once('spawn', () => {
+            if (bot !== newBot) return;
 
-            try {
-                viewer(bot, {
-                    port: 3007,
-                    firstPerson: true,
-                    viewDistance: 6
-                });
+            log('Бот появился в мире.');
 
-                viewerStarted = true;
-                emit('log', '3D Viewer запущен на порту 3007.');
-            } catch (error) {
-                emit('log', 'Ошибка Viewer: ' + error.message);
+            if (!viewerStarted) {
+                try {
+                    startViewer(newBot, {
+                        port: 3007,
+                        firstPerson: true,
+                        viewDistance: 6
+                    });
+
+                    viewerStarted = true;
+                    log('3D Viewer запущен на порту 3007.');
+                } catch (error) {
+                    log('Ошибка Viewer: ' + error.message);
+                }
             }
 
             updateInventory();
         });
 
-        bot.on('health', () => {
-            status.health = bot.health;
-            status.food = bot.food;
+        newBot.on('health', () => {
+            if (bot !== newBot) return;
+
+            status.health = newBot.health;
+            status.food = newBot.food;
+
             emit('status', status);
         });
 
-        bot.on('inventoryUpdate', updateInventory);
+        newBot.on('inventoryUpdate', () => {
+            if (bot === newBot) updateInventory();
+        });
 
-        bot.on('heldItemChanged', updateInventory);
+        newBot.on('heldItemChanged', () => {
+            if (bot === newBot) updateInventory();
+        });
 
-        bot.on('move', () => {
-            if (!bot || !bot.entity) return;
+        newBot.on('move', () => {
+            if (bot !== newBot || !newBot.entity) return;
 
             lookState = {
-                yaw: bot.entity.yaw,
-                pitch: bot.entity.pitch
+                yaw: newBot.entity.yaw,
+                pitch: newBot.entity.pitch
             };
 
             emit('position', {
-                x: bot.entity.position.x,
-                y: bot.entity.position.y,
-                z: bot.entity.position.z
+                x: newBot.entity.position.x,
+                y: newBot.entity.position.y,
+                z: newBot.entity.position.z
             });
         });
 
-        bot.on('kicked', reason => {
-            emit('log', 'Бот отключён сервером: ' + reason);
+        newBot.on('kicked', reason => {
+            log('Бот отключён сервером: ' + String(reason));
         });
 
-        bot.on('error', error => {
-            emit('log', 'Ошибка Minecraft: ' + error.message);
+        newBot.on('error', error => {
+            log('Ошибка Minecraft: ' + error.message);
         });
 
-        bot.on('end', () => {
+        newBot.on('end', () => {
+            closeViewer(newBot);
+
+            if (bot === newBot) {
+                bot = null;
+                starting = false;
+            }
+
             status.online = false;
             emit('status', status);
-            emit('log', 'Бот отключился.');
-            bot = null;
-            viewerStarted = false;
+
+            log('Бот отключился.');
         });
 
     } catch (error) {
-        emit('log', 'Ошибка запуска: ' + error.message);
+        bot = null;
+        starting = false;
+        log('Ошибка запуска: ' + error.message);
     }
 }
 
 function stopBot() {
-    if (!bot) return;
-
-    try {
-        bot.quit();
-    } catch (error) {
-        emit('log', error.message);
+    if (!bot) {
+        log('Бот уже остановлен.');
+        return;
     }
 
+    const oldBot = bot;
+
+    // Сразу запрещаем новые команды
     bot = null;
-    viewerStarted = false;
+    starting = false;
+
+    // Освобождаем порт Viewer
+    closeViewer(oldBot);
+
     status.online = false;
     emit('status', status);
-    emit('log', 'Бот остановлен.');
+
+    try {
+        oldBot.quit();
+    } catch (error) {
+        log('Ошибка остановки: ' + error.message);
+    }
+
+    log('Бот остановлен.');
 }
 
 function move(direction, enabled) {
     if (!bot || !bot.entity) return;
+
+    const allowed = [
+        'forward',
+        'back',
+        'left',
+        'right',
+        'jump',
+        'sprint',
+        'sneak'
+    ];
+
+    if (!allowed.includes(direction)) return;
+
     bot.setControlState(direction, Boolean(enabled));
 }
 
 function look(yaw, pitch) {
     if (!bot || !bot.entity) return;
 
-    bot.look(Number(yaw), Number(pitch), true);
+    const y = Number(yaw);
+    const p = Number(pitch);
+
+    if (!Number.isFinite(y) || !Number.isFinite(p)) return;
+
+    bot.look(y, p, true);
 }
 
 function breakBlock() {
@@ -188,8 +270,10 @@ function breakBlock() {
 
     if (!block || block.name === 'air') return;
 
+    if (bot.targetDigBlock) return;
+
     bot.dig(block).catch(error => {
-        emit('log', 'Ошибка ломания блока: ' + error.message);
+        log('Ошибка ломания блока: ' + error.message);
     });
 }
 
@@ -198,28 +282,27 @@ function placeBlock() {
 
     const block = bot.blockAtCursor(5);
 
-    if (!block) return;
-
-    const item = bot.heldItem;
-
-    if (!item) {
-        emit('log', 'В руке нет блока.');
+    if (!block) {
+        log('Нет блока перед ботом.');
         return;
     }
 
-    const face = new (require('vec3').Vec3)(0, 1, 0);
+    if (!bot.heldItem) {
+        log('В руке нет предмета для установки.');
+        return;
+    }
 
-    bot.placeBlock(block, face).catch(error => {
-        emit('log', 'Ошибка установки блока: ' + error.message);
+    bot.placeBlock(block, new Vec3(0, 1, 0)).catch(error => {
+        log('Ошибка установки блока: ' + error.message);
     });
 }
 
 function attack() {
     if (!bot || !bot.entity) return;
 
-    const entity = bot.nearestEntity(entity => {
-        return entity.type === 'mob' || entity.type === 'player';
-    });
+    const entity = bot.nearestEntity(entity =>
+        entity.type === 'mob' || entity.type === 'player'
+    );
 
     if (entity) bot.attack(entity);
 }
@@ -229,9 +312,12 @@ function selectSlot(slot) {
 
     const number = Number(slot);
 
-    if (number < 0 || number > 8) return;
+    if (!Number.isInteger(number) || number < 0 || number > 8) {
+        return;
+    }
 
     bot.setQuickBarSlot(number);
+    updateInventory();
 }
 
 function getBot() {
