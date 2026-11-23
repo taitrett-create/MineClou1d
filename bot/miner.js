@@ -6,7 +6,11 @@ const { Vec3 } = require('vec3');
 let bot = null;
 let io = null;
 let viewerStarted = false;
+let viewerStarting = false;
 let starting = false;
+let viewerBot = null;
+
+const VIEWER_PORT = 3007;
 
 let status = {
     online: false,
@@ -62,18 +66,49 @@ function updateInventory() {
 }
 
 function closeViewer(target) {
-    if (!target) return;
+    if (!target || viewerBot !== target) return;
 
     try {
         if (target.viewer && typeof target.viewer.close === 'function') {
             target.viewer.close();
             log('3D Viewer закрыт.');
+        } else {
+            log('Экземпляр Viewer не найден для закрытия.');
         }
     } catch (error) {
         log('Ошибка закрытия Viewer: ' + error.message);
     }
 
     viewerStarted = false;
+    viewerStarting = false;
+    viewerBot = null;
+}
+
+function startViewerForBot(target) {
+    if (!target || bot !== target) return;
+    if (viewerStarted || viewerStarting) return;
+
+    viewerStarting = true;
+    viewerBot = target;
+
+    try {
+        startViewer(target, {
+            port: VIEWER_PORT,
+            firstPerson: true,
+            viewDistance: 6
+        });
+
+        viewerStarted = true;
+        viewerStarting = false;
+
+        log('3D Viewer запущен на порту ' + VIEWER_PORT + '.');
+    } catch (error) {
+        viewerStarted = false;
+        viewerStarting = false;
+        viewerBot = null;
+
+        log('Ошибка запуска Viewer: ' + error.message);
+    }
 }
 
 function startBot(options, socketIO) {
@@ -93,8 +128,8 @@ function startBot(options, socketIO) {
     const port = Number(options.port);
     const username = options.username || 'MineCloudBot';
 
-    if (!host || !port) {
-        log('Укажи IP и порт сервера.');
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+        log('Укажи правильный IP и порт сервера.');
         return;
     }
 
@@ -114,6 +149,8 @@ function startBot(options, socketIO) {
         bot = newBot;
 
         newBot.once('login', () => {
+            if (bot !== newBot) return;
+
             starting = false;
 
             status.online = true;
@@ -128,22 +165,8 @@ function startBot(options, socketIO) {
 
             log('Бот появился в мире.');
 
-            if (!viewerStarted) {
-                try {
-                    startViewer(newBot, {
-                        port: 3007,
-                        firstPerson: true,
-                        viewDistance: 6
-                    });
-
-                    viewerStarted = true;
-                    log('3D Viewer запущен на порту 3007.');
-                } catch (error) {
-                    log('Ошибка Viewer: ' + error.message);
-                }
-            }
-
             updateInventory();
+            startViewerForBot(newBot);
         });
 
         newBot.on('health', () => {
@@ -186,7 +209,7 @@ function startBot(options, socketIO) {
             log('Ошибка Minecraft: ' + error.message);
         });
 
-        newBot.on('end', () => {
+        newBot.once('end', () => {
             closeViewer(newBot);
 
             if (bot === newBot) {
@@ -195,7 +218,12 @@ function startBot(options, socketIO) {
             }
 
             status.online = false;
+            status.username = '';
+
+            inventory = [];
+
             emit('status', status);
+            emit('inventory', inventory);
 
             log('Бот отключился.');
         });
@@ -203,6 +231,7 @@ function startBot(options, socketIO) {
     } catch (error) {
         bot = null;
         starting = false;
+
         log('Ошибка запуска: ' + error.message);
     }
 }
@@ -215,15 +244,18 @@ function stopBot() {
 
     const oldBot = bot;
 
-    // Сразу запрещаем новые команды
     bot = null;
     starting = false;
 
-    // Освобождаем порт Viewer
     closeViewer(oldBot);
 
     status.online = false;
+    status.username = '';
+
+    inventory = [];
+
     emit('status', status);
+    emit('inventory', inventory);
 
     try {
         oldBot.quit();
@@ -269,7 +301,6 @@ function breakBlock() {
     const block = bot.blockAtCursor(5);
 
     if (!block || block.name === 'air') return;
-
     if (bot.targetDigBlock) return;
 
     bot.dig(block).catch(error => {
