@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
+const httpProxy = require('http-proxy');
 const miner = require('./bot/miner');
 
 const app = express();
@@ -18,15 +19,42 @@ const io = new Server(server, {
     transports: ['polling', 'websocket']
 });
 
+// Прокси для Minecraft Viewer
+const viewerProxy = httpProxy.createProxyServer({
+    target: 'http://127.0.0.1:3007',
+    ws: true,
+    changeOrigin: true
+});
+
+viewerProxy.on('error', (error, req, res) => {
+    console.error('[VIEWER PROXY]', error.message);
+
+    if (res && !res.headersSent) {
+        res.writeHead(502, {
+            'Content-Type': 'text/plain'
+        });
+        res.end('Minecraft Viewer is not running.');
+    }
+});
+
 app.use(express.json());
+
+// Viewer должен идти через основной адрес Render
+app.use('/viewer', (req, res) => {
+    viewerProxy.web(req, res, {
+        target: 'http://127.0.0.1:3007'
+    });
+});
+
+// Статические файлы сайта
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Проверка работы сервера
+// Проверка сервера
 app.get('/health', (req, res) => {
     res.json({
         online: true,
         name: 'MineCloud',
-        time: new Date().toISOString()
+        viewer: 'http://127.0.0.1:3007'
     });
 });
 
@@ -47,7 +75,6 @@ io.on('connection', socket => {
     socket.emit('inventory', miner.getInventory());
     socket.emit('look', miner.getLookState());
 
-    // Запуск бота
     function startBot(data = {}) {
         const options = {
             host: data.host || data.ip || data.serverIP,
@@ -68,7 +95,6 @@ io.on('connection', socket => {
     socket.on('startBot', startBot);
     socket.on('bot:start', startBot);
 
-    // Остановка бота
     function stopBot() {
         miner.stopBot();
         log('Команда остановки бота.');
@@ -78,7 +104,6 @@ io.on('connection', socket => {
     socket.on('stopBot', stopBot);
     socket.on('bot:stop', stopBot);
 
-    // Движение
     socket.on('move', data => {
         if (typeof data === 'string') {
             miner.move(data, true);
@@ -88,8 +113,12 @@ io.on('connection', socket => {
         if (!data) return;
 
         const direction = data.direction || data.control;
+
         if (direction) {
-            miner.move(direction, data.enabled ?? data.state ?? true);
+            miner.move(
+                direction,
+                data.enabled ?? data.state ?? true
+            );
         }
     });
 
@@ -102,7 +131,6 @@ io.on('connection', socket => {
         );
     });
 
-    // Действия
     socket.on('breakBlock', () => miner.breakBlock());
     socket.on('break', () => miner.breakBlock());
 
@@ -120,7 +148,17 @@ io.on('connection', socket => {
     });
 });
 
-// Обработка ошибок
+// WebSocket-прокси для Viewer
+server.on('upgrade', (req, socket, head) => {
+    if (req.url.startsWith('/viewer')) {
+        req.url = req.url.replace(/^\/viewer/, '') || '/';
+
+        viewerProxy.ws(req, socket, head, {
+            target: 'http://127.0.0.1:3007'
+        });
+    }
+});
+
 server.on('error', error => {
     console.error('[SERVER ERROR]', error);
 });
@@ -133,12 +171,12 @@ process.on('unhandledRejection', error => {
     console.error('[UNHANDLED REJECTION]', error);
 });
 
-// Render сам выдаёт порт через PORT
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log('================================');
     console.log('       MINECLOUD STARTED');
     console.log('       PORT: ' + PORT);
+    console.log('       VIEWER: /viewer/');
     console.log('================================');
 });
