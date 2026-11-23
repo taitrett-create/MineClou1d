@@ -1,109 +1,139 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MineCloud</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
-    <header>
-        <h1>☁ MineCloud</h1>
-        <span id="status">● OFFLINE</span>
-    </header>
 
-    <main>
-        <section class="game">
-            <div class="screen" id="gameScreen">
-                <iframe
-                    src="http://localhost:3007"
-                    title="Minecraft Viewer"
-                    id="viewer"
-                ></iframe>
+<header>
+    <h1>☁ MineCloud</h1>
+    <span id="status">● OFFLINE</span>
+</header>
 
-                <div class="vitals" id="vitals">
-                    <div class="vital">
-                        <span>❤</span>
-                        <div class="bar">
-                            <div id="healthBar" class="barFill healthFill"></div>
-                        </div>
-                        <span id="healthText">0/20</span>
+<main>
+
+    <section class="game">
+
+        <div class="screen" id="gameScreen">
+
+            <iframe
+                src="/viewer/"
+                title="Minecraft Viewer"
+                id="viewer"
+                allow="fullscreen"
+            ></iframe>
+
+            <div class="vitals" id="vitals">
+
+                <div class="vital">
+                    <span>❤</span>
+                    <div class="bar">
+                        <div id="healthBar" class="barFill healthFill"></div>
                     </div>
-
-                    <div class="vital">
-                        <span>🍗</span>
-                        <div class="bar">
-                            <div id="foodBar" class="barFill foodFill"></div>
-                        </div>
-                        <span id="foodText">0/20</span>
-                    </div>
+                    <span id="healthText">0/20</span>
                 </div>
 
-                <div id="handOverlay">
-                    <div class="handItem">
-                        <span id="heldItemName">Пустая рука</span>
-                        <span id="heldItemCount"></span>
+                <div class="vital">
+                    <span>🍗</span>
+                    <div class="bar">
+                        <div id="foodBar" class="barFill foodFill"></div>
                     </div>
-                    <div class="minecraftHand">
-                        <div class="handSleeve"></div>
-                        <div class="handSkin"></div>
-                    </div>
+                    <span id="foodText">0/20</span>
                 </div>
 
-                <div id="mouseLayer" title="Нажми, чтобы захватить мышь"></div>
+            </div>
 
-                <div class="screenHint" id="screenHint">
-                    Нажми на экран, чтобы управлять камерой
+            <div id="handOverlay">
+                <div class="handItem">
+                    <span id="heldItemName">Пустая рука</span>
+                    <span id="heldItemCount"></span>
+                </div>
+
+                <div class="minecraftHand">
+                    <div class="handSleeve"></div>
+                    <div class="handSkin"></div>
                 </div>
             </div>
 
-            <div class="hotbar" id="hotbar"></div>
+            <div id="mouseLayer" title="Нажми, чтобы захватить мышь"></div>
 
-            <div class="inventoryPanel">
-                <h3>Инвентарь бота</h3>
-                <div id="inventoryGrid"></div>
+            <div class="screenHint" id="screenHint">
+                Нажми на экран, чтобы управлять камерой
             </div>
 
-            <p class="controlsHint">
-                WASD — движение · Пробел — прыжок · Shift — присесть
-                · 1–9 — выбор предмета · Esc — отпустить мышь
-                <br>
-                ЛКМ — ломать / атаковать · ПКМ — взаимодействовать
-                <br>
-                F8 — бесконечный ПКМ · F9 — бесконечный ЛКМ
-            </p>
-        </section>
+        </div>
 
-        <section class="panel">
-            <h2>Управление ботом</h2>
+        <div class="hotbar" id="hotbar"></div>
 
-            <label for="host">IP сервера</label>
-            <input id="host" value="Weesd20cj2odjn1.aternos.me">
+        <div class="inventoryPanel">
+            <h3>Инвентарь бота</h3>
+            <div id="inventoryGrid"></div>
+        </div>
 
-            <label for="port">Порт сервера</label>
-            <input id="port" type="number" value="29520">
+        <p class="controlsHint">
+            WASD — движение · Пробел — прыжок · Shift — присесть
+            · 1–9 — выбор предмета · Esc — отпустить мышь
+            <br>
+            ЛКМ — ломать / атаковать · ПКМ — взаимодействовать
+            <br>
+            F8 — бесконечный ПКМ · F9 — бесконечный ЛКМ
+        </p>
 
-            <label for="username">Ник бота</label>
-            <input id="username" value="MineCloud_Bot" maxlength="16">
+    </section>
 
-            <button id="start">▶ START BOT</button>
-            <button id="stop">■ STOP BOT</button>
+    <section class="panel">
 
-            <div class="info">
-                <h3>Состояние</h3>
-                <p id="message">Ожидание запуска...</p>
-            </div>
-        </section>
+        <h2>Управление ботом</h2>
 
-        <section class="logs">
-            <h2>Журнал событий</h2>
-            <div id="logList">
-                <p>MineCloud готов к работе.</p>
-            </div>
-        </section>
-    </main>
+        <label for="host">IP сервера</label>
+        <input
+            id="host"
+            value="Weesd20cj2odjn1.aternos.me"
+        >
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="script.js"></script>
+        <label for="port">Порт сервера</label>
+        <input
+            id="port"
+            type="number"
+            value="29520"
+        >
+
+        <label for="username">Ник бота</label>
+        <input
+            id="username"
+            value="MineCloud_Bot"
+            maxlength="16"
+        >
+
+        <button id="start">▶ START BOT</button>
+        <button id="stop">■ STOP BOT</button>
+
+        <div class="info">
+            <h3>Состояние</h3>
+            <p id="message">Ожидание запуска...</p>
+        </div>
+
+    </section>
+
+    <section class="logs">
+
+        <h2>Журнал событий</h2>
+
+        <div id="logList">
+            <p>MineCloud готов к работе.</p>
+        </div>
+
+    </section>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/script.js"></script>
+
 </body>
 </html>
