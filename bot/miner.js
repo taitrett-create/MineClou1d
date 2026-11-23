@@ -3,14 +3,16 @@ const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const { Vec3 } = require('vec3');
 
+const VIEWER_PORT = 3007;
+
 let bot = null;
 let io = null;
+
 let viewerStarted = false;
 let viewerStarting = false;
-let starting = false;
 let viewerBot = null;
 
-const VIEWER_PORT = 3007;
+let starting = false;
 
 let status = {
     online: false,
@@ -28,7 +30,9 @@ let lookState = {
 };
 
 function emit(event, data) {
-    if (io) io.emit(event, data);
+    if (io) {
+        io.emit(event, data);
+    }
 }
 
 function log(message) {
@@ -41,7 +45,15 @@ function getStatus() {
 }
 
 function getInventory() {
-    return inventory;
+    return {
+        slots: inventory,
+        selected: bot ? bot.quickBarSlot : 0,
+        heldItem: bot && bot.heldItem ? {
+            name: bot.heldItem.name,
+            displayName: bot.heldItem.displayName,
+            count: bot.heldItem.count
+        } : null
+    };
 }
 
 function getLookState() {
@@ -62,18 +74,21 @@ function updateInventory() {
         };
     });
 
-    emit('inventory', inventory);
+    emit('inventory', getInventory());
 }
 
 function closeViewer(target) {
     if (!target || viewerBot !== target) return;
 
     try {
-        if (target.viewer && typeof target.viewer.close === 'function') {
+        if (target.viewer &&
+            typeof target.viewer.close === 'function') {
+
             target.viewer.close();
             log('3D Viewer закрыт.');
+
         } else {
-            log('Экземпляр Viewer не найден для закрытия.');
+            log('Не удалось найти экземпляр Viewer для закрытия.');
         }
     } catch (error) {
         log('Ошибка закрытия Viewer: ' + error.message);
@@ -102,6 +117,7 @@ function startViewerForBot(target) {
         viewerStarting = false;
 
         log('3D Viewer запущен на порту ' + VIEWER_PORT + '.');
+
     } catch (error) {
         viewerStarted = false;
         viewerStarting = false;
@@ -128,7 +144,9 @@ function startBot(options, socketIO) {
     const port = Number(options.port);
     const username = options.username || 'MineCloudBot';
 
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+    if (!host || !Number.isInteger(port) ||
+        port < 1 || port > 65535) {
+
         log('Укажи правильный IP и порт сервера.');
         return;
     }
@@ -157,6 +175,7 @@ function startBot(options, socketIO) {
             status.username = username;
 
             emit('status', status);
+
             log('Бот успешно вошёл на сервер.');
         });
 
@@ -179,11 +198,15 @@ function startBot(options, socketIO) {
         });
 
         newBot.on('inventoryUpdate', () => {
-            if (bot === newBot) updateInventory();
+            if (bot === newBot) {
+                updateInventory();
+            }
         });
 
         newBot.on('heldItemChanged', () => {
-            if (bot === newBot) updateInventory();
+            if (bot === newBot) {
+                updateInventory();
+            }
         });
 
         newBot.on('move', () => {
@@ -223,7 +246,7 @@ function startBot(options, socketIO) {
             inventory = [];
 
             emit('status', status);
-            emit('inventory', inventory);
+            emit('inventory', getInventory());
 
             log('Бот отключился.');
         });
@@ -255,7 +278,7 @@ function stopBot() {
     inventory = [];
 
     emit('status', status);
-    emit('inventory', inventory);
+    emit('inventory', getInventory());
 
     try {
         oldBot.quit();
@@ -313,10 +336,7 @@ function placeBlock() {
 
     const block = bot.blockAtCursor(5);
 
-    if (!block) {
-        log('Нет блока перед ботом.');
-        return;
-    }
+    if (!block) return;
 
     if (!bot.heldItem) {
         log('В руке нет предмета для установки.');
@@ -335,7 +355,9 @@ function attack() {
         entity.type === 'mob' || entity.type === 'player'
     );
 
-    if (entity) bot.attack(entity);
+    if (entity) {
+        bot.attack(entity);
+    }
 }
 
 function selectSlot(slot) {
@@ -343,9 +365,8 @@ function selectSlot(slot) {
 
     const number = Number(slot);
 
-    if (!Number.isInteger(number) || number < 0 || number > 8) {
-        return;
-    }
+    if (!Number.isInteger(number) ||
+        number < 0 || number > 8) return;
 
     bot.setQuickBarSlot(number);
     updateInventory();
