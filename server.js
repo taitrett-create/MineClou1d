@@ -19,34 +19,48 @@ const io = new Server(server, {
     transports: ['polling', 'websocket']
 });
 
-const VIEWER_TARGET = 'http://127.0.0.1:3007';
-
 const viewerProxy = httpProxy.createProxyServer({
-    target: VIEWER_TARGET,
+    target: 'http://127.0.0.1:3007',
     ws: true,
     changeOrigin: true
 });
 
+// Исправленный обработчик ошибок Viewer
 viewerProxy.on('error', (error, req, res) => {
     console.error('[VIEWER PROXY]', error.message);
 
-    if (res && !res.headersSent) {
-        res.writeHead(502, {
-            'Content-Type': 'text/plain; charset=utf-8'
-        });
+    // Обычный HTTP-запрос
+    if (res && typeof res.writeHead === 'function') {
+        if (!res.headersSent) {
+            res.writeHead(502, {
+                'Content-Type': 'text/plain'
+            });
+        }
 
-        res.end('Minecraft Viewer is not running.');
+        if (typeof res.end === 'function') {
+            res.end('Minecraft Viewer is not running.');
+        }
+
+        return;
+    }
+
+    // WebSocket-соединение
+    if (res && typeof res.destroy === 'function') {
+        res.destroy();
     }
 });
 
 app.use(express.json());
 
-// Viewer через /viewer/
+// Minecraft Viewer
 app.use('/viewer', (req, res) => {
     viewerProxy.web(req, res, {
-        target: VIEWER_TARGET
+        target: 'http://127.0.0.1:3007'
     });
 });
+
+// Статические файлы
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Проверка сервера
 app.get('/health', (req, res) => {
@@ -56,35 +70,6 @@ app.get('/health', (req, res) => {
         viewer: '/viewer/'
     });
 });
-
-// Остальные запросы к ресурсам Viewer.
-// Нужны для файлов, которые Viewer запрашивает от корня.
-const viewerResources = [
-    '/bundle.js',
-    '/favicon.ico',
-    '/textures',
-    '/worker',
-    '/socket',
-    '/ws',
-    '/chunks'
-];
-
-app.use((req, res, next) => {
-    const isViewerResource = viewerResources.some(prefix =>
-        req.path === prefix || req.path.startsWith(prefix + '/')
-    );
-
-    if (isViewerResource) {
-        return viewerProxy.web(req, res, {
-            target: VIEWER_TARGET
-        });
-    }
-
-    next();
-});
-
-// Статические файлы сайта
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Главная страница
 app.get('/', (req, res) => {
@@ -107,7 +92,8 @@ io.on('connection', socket => {
         const options = {
             host: data.host || data.ip || data.serverIP,
             port: Number(data.port || data.serverPort),
-            username: data.username || data.nick || data.nickname || 'MineCloudBot'
+            username: data.username || data.nick ||
+                data.nickname || 'MineCloudBot'
         };
 
         if (!options.host || !options.port) {
@@ -116,6 +102,7 @@ io.on('connection', socket => {
         }
 
         log('Запуск бота: ' + options.host + ':' + options.port);
+
         miner.startBot(options, io);
     }
 
@@ -176,28 +163,15 @@ io.on('connection', socket => {
     });
 });
 
-// WebSocket Viewer
+// WebSocket для Viewer
 server.on('upgrade', (req, socket, head) => {
-    const url = req.url || '/';
-
-    if (
-        url.startsWith('/viewer/') ||
-        url === '/viewer' ||
-        url.startsWith('/ws') ||
-        url.startsWith('/socket')
-    ) {
-        if (url.startsWith('/viewer')) {
-            req.url = url.replace(/^\/viewer/, '') || '/';
-        }
+    if (req.url.startsWith('/viewer')) {
+        req.url = req.url.replace(/^\/viewer/, '') || '/';
 
         viewerProxy.ws(req, socket, head, {
-            target: VIEWER_TARGET
+            target: 'http://127.0.0.1:3007'
         });
-
-        return;
     }
-
-    // Остальные WebSocket-запросы оставляем Socket.IO.
 });
 
 server.on('error', error => {
@@ -218,6 +192,5 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('================================');
     console.log('       MINECLOUD STARTED');
     console.log('       PORT: ' + PORT);
-    console.log('       VIEWER: /viewer/');
     console.log('================================');
 });
