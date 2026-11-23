@@ -7,6 +7,49 @@ const httpProxy = require('http-proxy');
 const miner = require('./bot/miner');
 
 const app = express();
+// MINECLOUD DIAGNOSTICS
+const fs = require('fs');
+const path = require('path');
+
+function showPackageVersion(packageName) {
+    try {
+        let currentPath = require.resolve(packageName);
+        let folder = path.dirname(currentPath);
+
+        while (true) {
+            const packageFile = path.join(folder, 'package.json');
+
+            if (fs.existsSync(packageFile)) {
+                const data = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
+
+                if (data.name === packageName) {
+                    console.log(
+                        `[DIAGNOSTICS] ${packageName}: ${data.version}`
+                    );
+                    console.log(`[DIAGNOSTICS] Путь: ${folder}`);
+                    return;
+                }
+            }
+
+            const parent = path.dirname(folder);
+            if (parent === folder) break;
+            folder = parent;
+        }
+
+        console.log(`[DIAGNOSTICS] ${packageName}: версия не найдена`);
+    } catch (error) {
+        console.log(`[DIAGNOSTICS] ${packageName}: НЕ НАЙДЕН`);
+    }
+}
+
+console.log('========== MINECLOUD DIAGNOSTICS ==========');
+
+showPackageVersion('@wp2508/mineflayer');
+showPackageVersion('@wp2508/minecraft-protocol');
+showPackageVersion('minecraft-protocol');
+showPackageVersion('prismarine-viewer');
+
+console.log('===========================================');
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -194,3 +237,4 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log('       PORT: ' + PORT);
     console.log('================================');
 });
+
