@@ -1,0 +1,307 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: #101827;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+header {
+    padding: 20px 5%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #182438;
+}
+
+#status {
+    color: #ff5555;
+}
+
+main {
+    max-width: 1250px;
+    margin: 35px auto;
+    padding: 15px;
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+}
+
+.game,
+.panel {
+    background: #1b293d;
+    padding: 18px;
+    border-radius: 15px;
+    min-width: 0;
+}
+
+.screen {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    position: relative;
+    overflow: hidden;
+    background: #263d36;
+}
+
+#viewer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    pointer-events: none;
+}
+
+#mouseLayer {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    cursor: crosshair;
+}
+
+.screenHint {
+    position: absolute;
+    z-index: 9;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.65);
+    padding: 8px 12px;
+    border-radius: 7px;
+    font-size: 12px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.vitals {
+    position: absolute;
+    z-index: 7;
+    top: 12px;
+    left: 12px;
+    width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+    text-shadow: 1px 1px 3px black;
+}
+
+.vital {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.vital > span:first-child {
+    width: 18px;
+    font-size: 16px;
+}
+
+.vital > span:last-child {
+    width: 35px;
+    text-align: right;
+}
+
+.bar {
+    flex: 1;
+    height: 11px;
+    border: 1px solid rgba(255,255,255,0.5);
+    background: rgba(0,0,0,0.65);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.barFill {
+    width: 0%;
+    height: 100%;
+    transition: width 0.2s;
+}
+
+.healthFill {
+    background: #ef4444;
+}
+
+.foodFill {
+    background: #eaa33a;
+}
+
+#handOverlay {
+    position: absolute;
+    z-index: 4;
+    right: 12px;
+    bottom: 10px;
+    width: 125px;
+    height: 145px;
+    pointer-events: none;
+}
+
+.handItem {
+    position: absolute;
+    right: 0;
+    top: 0;
+    max-width: 125px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    background: rgba(0,0,0,0.6);
+    font-size: 11px;
+    text-align: center;
+    overflow-wrap: anywhere;
+    text-shadow: 1px 1px 2px black;
+}
+
+#heldItemCount {
+    margin-left: 4px;
+    font-weight: bold;
+}
+
+.minecraftHand {
+    position: absolute;
+    right: 15px;
+    bottom: -4px;
+    width: 48px;
+    height: 85px;
+    transform: rotate(-18deg);
+    transform-origin: bottom center;
+}
+
+.handSleeve {
+    position: absolute;
+    width: 43px;
+    height: 55px;
+    right: 0;
+    bottom: 25px;
+    background: #3975a8;
+    border: 3px solid #17283b;
+    border-radius: 3px;
+    box-shadow: inset -7px 0 rgba(0,0,0,0.18);
+}
+
+.handSkin {
+    position: absolute;
+    width: 43px;
+    height: 31px;
+    right: 0;
+    bottom: 0;
+    background: #d49a70;
+    border: 3px solid #17283b;
+    border-radius: 3px;
+}
+
+.hotbar {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 5px;
+    max-width: 480px;
+    margin: 15px auto;
+}
+
+.itemSlot {
+    min-width: 0;
+    min-height: 48px;
+    border: 2px solid #53647b;
+    border-radius: 6px;
+    background: #26374d;
+    padding: 4px;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    font-size: 10px;
+    overflow: hidden;
+}
+
+.itemSlot.selected {
+    border-color: #facc15;
+    background: #46536a;
+}
+
+.itemName {
+    overflow-wrap: anywhere;
+}
+
+.itemCount {
+    position: absolute;
+    bottom: 2px;
+    right: 4px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 1px 1px 2px black;
+}
+
+.inventoryPanel {
+    margin-top: 20px;
+    padding: 12px;
+    background: #142033;
+    border-radius: 9px;
+}
+
+.inventoryPanel h3 {
+    margin-top: 0;
+}
+
+#inventoryGrid {
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.controlsHint {
+    color: #b7c5d8;
+    font-size: 12px;
+    line-height: 1.7;
+    text-align: center;
+}
+
+input {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0 20px;
+    border: 0;
+    border-radius: 7px;
+}
+
+button {
+    width: 100%;
+    padding: 14px;
+    margin: 7px 0;
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+#start {
+    background: #16a34a;
+    color: white;
+}
+
+#stop {
+    background: #dc2626;
+    color: white;
+}
+
+.info {
+    margin-top: 20px;
+}
+
+.logs {
+    grid-column: 1 / -1;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 750px) {
+    main {
+        grid-template-columns: 1fr;
+    }
+
+    .logs {
+        grid-column: auto;
+    }
+}
