@@ -2,6 +2,7 @@
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const { Vec3 } = require('vec3');
+const net = require('net');
 
 const VIEWER_PORT = 3007;
 const MINECRAFT_VERSION = '26.3';
@@ -14,6 +15,9 @@ let viewerStarted = false;
 let viewerBot = null;
 
 let connectionTimer = null;
+let pendingSocket = null;
+let connectionAttempt = 0;
+
 let loadedChunks = 0;
 let chunkPackets = 0;
 
@@ -33,7 +37,9 @@ let lookState = {
 };
 
 function stringify(value) {
-    if (value === undefined) return 'причина не указана';
+    if (value === undefined || value === null) {
+        return 'причина не указана';
+    }
 
     try {
         return typeof value === 'string'
@@ -97,7 +103,6 @@ function closeViewer(target) {
         if (target.viewer &&
             typeof target.viewer.close === 'function') {
             target.viewer.close();
-            log('Viewer закрыт.');
         }
     } catch (error) {
         log('Ошибка закрытия Viewer: ' + error.message);
@@ -108,56 +113,90 @@ function closeViewer(target) {
 }
 
 function startViewerForBot(target) {
-    if (!target || bot !== target) return;
-    if (viewerStarted) return;
+    if (!target || bot !== target || viewerStarted) return;
+
+    viewerStarted = true;
+    viewerBot = target;
+
+    log('Запускаю Viewer...');
 
     try {
-        log('Попытка запуска Viewer...');
-
-        startViewer(target, {
+        Promise.resolve(startViewer(target, {
             port: VIEWER_PORT,
             firstPerson: true,
             viewDistance: 2
+        }))
+        .then(() => {
+            if (bot === target) {
+                log('Viewer запущен на порту ' + VIEWER_PORT);
+            }
+        })
+        .catch(error => {
+            viewerStarted = false;
+            viewerBot = null;
+            log('Ошибка Viewer: ' + error.stack);
         });
-
-        viewerStarted = true;
-        viewerBot = target;
-
-        log('Viewer запущен на порту ' + VIEWER_PORT);
-        log('ВНИМАНИЕ: отображение чанков версии 26.3 пока не подтверждено.');
     } catch (error) {
-        log('Ошибка Viewer: ' + error.stack);
+        viewerStarted = false;
+        viewerBot = null;
+        log('Ошибка запуска Viewer: ' + error.stack);
     }
 }
 
-function startBot(options, socketIO) {
-    if (starting || bot) {
-        log('Бот уже запускается или подключён.');
-        return;
+// Проверяем, доступен ли адрес и порт Aternos
+function checkTCP(host, port, attempt, callback) {
+    log(`Проверяю TCP: ${host}:${port}...`);
+
+    const socket = new net.Socket();
+    pendingSocket = socket;
+
+    let finished = false;
+
+    function finish(error) {
+        if (finished) return;
+        finished = true;
+
+        socket.destroy();
+
+        if (pendingSocket === socket) {
+            pendingSocket = null;
+        }
+
+        if (attempt !== connectionAttempt) return;
+
+        callback(error);
     }
 
-    io = socketIO || io;
+    socket.setTimeout(15000);
 
-    const host = options.host;
-    const port = Number(options.port);
-    const username = options.username || 'MineCloudBot';
+    socket.once('connect', () => {
+        log('TCP CONNECTED: порт сервера доступен.');
+        finish(null);
+    });
 
-    if (!host || !Number.isInteger(port) ||
-        port < 1 || port > 65535) {
-        log('Неправильный IP или порт.');
-        return;
-    }
+    socket.once('timeout', () => {
+        finish(new Error('TCP TIMEOUT: сервер не ответил за 15 секунд.'));
+    });
 
-    starting = true;
-    loadedChunks = 0;
-    chunkPackets = 0;
+    socket.once('error', error => {
+        finish(new Error('TCP ERROR: ' + error.message));
+    });
 
-    log(`Подключение к ${host}:${port}...`);
-    log(`Версия протокола: ${MINECRAFT_VERSION}`);
-    log(`Ник: ${username}`);
+    socket.connect({
+        host,
+        port
+    });
+}
+
+function createMinecraftBot(host, port, username, attempt) {
+    if (attempt !== connectionAttempt) return;
+
+    log('Начинаю вход в Minecraft...');
+
+    let newBot;
 
     try {
-        const newBot = mineflayer.createBot({
+        newBot = mineflayer.createBot({
             host,
             port,
             username,
@@ -166,29 +205,22 @@ function startBot(options, socketIO) {
         });
 
         bot = newBot;
+        newBot._minecloudStage = 'создание Minecraft-соединения';
 
-        connectionTimer = setTimeout(() => {
-            if (bot !== newBot) return;
+        log('Клиент Minecraft создан.');
 
-            if (!status.online) {
-                log('ПРЕДУПРЕЖДЕНИЕ: прошло 30 секунд, но вход ещё не завершён.');
-                log('Последний этап: ' + (newBot._minecloudStage || 'создание соединения'));
-            }
-        }, 30000);
-
-        newBot._minecloudStage = 'создание соединения';
-
-        // События сетевого клиента
         if (newBot._client) {
             newBot._client.on('connect', () => {
                 if (bot !== newBot) return;
 
                 newBot._minecloudStage = 'TCP соединение установлено';
-                log('TCP соединение с сервером установлено.');
+                log('Minecraft: TCP соединение установлено.');
             });
 
             newBot._client.on('error', error => {
-                log('Ошибка сетевого клиента: ' + error.message);
+                if (bot !== newBot) return;
+
+                log('Сетевая ошибка: ' + error.message);
             });
 
             newBot._client.on('packet', (data, meta) => {
@@ -200,13 +232,23 @@ function startBot(options, socketIO) {
                     chunkPackets++;
 
                     if (chunkPackets <= 10 || chunkPackets % 20 === 0) {
-                        log(
-                            `Пакет чанка #${chunkPackets}: ${packetName}`
-                        );
+                        log(`Пакет чанка #${chunkPackets}: ${packetName}`);
                     }
                 }
             });
+        } else {
+            log('ВНИМАНИЕ: Minecraft-клиент пока не создан.');
         }
+
+        // Если за 90 секунд вход не завершился, показываем этап
+        connectionTimer = setTimeout(() => {
+            if (bot !== newBot) return;
+            if (status.online) return;
+
+            log('ОШИБКА: вход не завершился за 90 секунд.');
+            log('Последний этап: ' + newBot._minecloudStage);
+            log('Проверьте совместимость протокола и доступность сервера.');
+        }, 90000);
 
         newBot.on('login', () => {
             if (bot !== newBot) return;
@@ -224,18 +266,17 @@ function startBot(options, socketIO) {
 
             emit('status', status);
 
-            log('УСПЕХ: бот вошёл на сервер.');
+            log('УСПЕХ: бот вошёл на сервер!');
         });
 
         newBot.once('spawn', () => {
             if (bot !== newBot) return;
 
-            newBot._minecloudStage = 'spawn выполнен';
+            newBot._minecloudStage = 'появился в мире';
 
-            log('Бот появился в мире.');
-            log('Ожидаем чанки...');
-
+            log('Бот появился в мире!');
             updateInventory();
+
             startViewerForBot(newBot);
         });
 
@@ -245,9 +286,7 @@ function startBot(options, socketIO) {
             loadedChunks++;
 
             if (loadedChunks <= 10 || loadedChunks % 20 === 0) {
-                log(
-                    `Загружен чанк #${loadedChunks}: X=${point.x}, Z=${point.z}`
-                );
+                log(`Загружен чанк #${loadedChunks}: X=${point.x}, Z=${point.z}`);
             }
         });
 
@@ -290,11 +329,15 @@ function startBot(options, socketIO) {
         });
 
         newBot.on('kicked', reason => {
+            if (bot !== newBot) return;
+
             log('СЕРВЕР ОТКЛОНИЛ БОТА: ' + stringify(reason));
         });
 
         newBot.on('error', error => {
-            log('ОШИБКА MINEFLAYER: ' + error.stack);
+            if (bot !== newBot) return;
+
+            log('ОШИБКА MINEFLAYER: ' + (error.stack || error.message));
         });
 
         newBot.once('end', reason => {
@@ -303,15 +346,16 @@ function startBot(options, socketIO) {
                 connectionTimer = null;
             }
 
-            log('Соединение завершено. Причина: ' + stringify(reason));
-            log(`Итого: чанков=${loadedChunks}, пакетов чанков=${chunkPackets}`);
+            log('Соединение завершено: ' + stringify(reason));
+            log(`Статистика: чанков=${loadedChunks}, пакетов=${chunkPackets}`);
 
             closeViewer(newBot);
 
             if (bot === newBot) {
                 bot = null;
-                starting = false;
             }
+
+            starting = false;
 
             status.online = false;
             status.username = '';
@@ -329,17 +373,76 @@ function startBot(options, socketIO) {
             connectionTimer = null;
         }
 
-        bot = null;
+        if (bot === newBot) {
+            bot = null;
+        }
+
         starting = false;
 
-        log('ОШИБКА СОЗДАНИЯ БОТА: ' + error.stack);
+        log('ОШИБКА СОЗДАНИЯ БОТА: ' + (error.stack || error.message));
     }
 }
 
-function stopBot() {
-    if (!bot) {
-        log('Бот уже остановлен.');
+function startBot(options, socketIO) {
+    if (starting || bot) {
+        log('Бот уже запускается или подключён.');
         return;
+    }
+
+    io = socketIO || io;
+
+    options = options || {};
+
+    const host = String(options.host || '').trim();
+    const port = Number(options.port);
+    const username = String(options.username || 'MineCloud_Bot').trim();
+
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+        log('ОШИБКА: неправильный адрес или порт.');
+        return;
+    }
+
+    starting = true;
+
+    const attempt = ++connectionAttempt;
+
+    loadedChunks = 0;
+    chunkPackets = 0;
+
+    status.online = false;
+    status.username = '';
+
+    emit('status', status);
+
+    log(`Запуск бота: ${host}:${port}`);
+    log(`Ник: ${username}`);
+    log(`Версия: ${MINECRAFT_VERSION}`);
+
+    checkTCP(host, port, attempt, error => {
+        if (attempt !== connectionAttempt) return;
+
+        if (error) {
+            starting = false;
+            log(error.message);
+            log('Бот не запущен: сначала нужно восстановить соединение с сервером.');
+            return;
+        }
+
+        createMinecraftBot(host, port, username, attempt);
+    });
+}
+
+function stopBot() {
+    connectionAttempt++;
+
+    if (pendingSocket) {
+        pendingSocket.destroy();
+        pendingSocket = null;
+    }
+
+    if (connectionTimer) {
+        clearTimeout(connectionTimer);
+        connectionTimer = null;
     }
 
     const oldBot = bot;
@@ -347,9 +450,16 @@ function stopBot() {
     bot = null;
     starting = false;
 
-    if (connectionTimer) {
-        clearTimeout(connectionTimer);
-        connectionTimer = null;
+    if (!oldBot) {
+        status.online = false;
+        status.username = '';
+        inventory = [];
+
+        emit('status', status);
+        emit('inventory', getInventory());
+
+        log('Бот остановлен.');
+        return;
     }
 
     closeViewer(oldBot);
