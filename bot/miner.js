@@ -1,3 +1,4 @@
+
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const Vec3 = require('vec3');
@@ -34,7 +35,9 @@ function log(io, text) {
 
     console.log('[MineCloud]', entry);
 
-    if (io) io.emit('log', entry);
+    if (io) {
+        io.emit('log', entry);
+    }
 }
 
 function update(io, newState, newMessage) {
@@ -88,7 +91,9 @@ function getVitals() {
 }
 
 function sendVitals(io) {
-    if (io) io.emit('vitals', getVitals());
+    if (io) {
+        io.emit('vitals', getVitals());
+    }
 }
 
 function getInventory() {
@@ -125,7 +130,9 @@ function getInventory() {
 }
 
 function sendInventory(io) {
-    if (io) io.emit('inventory', getInventory());
+    if (io) {
+        io.emit('inventory', getInventory());
+    }
 }
 
 function closeViewer(currentBot, io) {
@@ -145,15 +152,17 @@ function closeViewer(currentBot, io) {
     viewerStarted = false;
 }
 
-function releaseMouseActions() {
+// Сброс мыши. ВАЖНО: deactivateItem() здесь не вызываем.
+function releaseMouseActions(targetBot = bot) {
     mousePressed.left = false;
     mousePressed.right = false;
 
-    if (bot) {
+    if (targetBot) {
         try {
-            bot.stopDigging();
-            bot.deactivateItem();
-        } catch (error) {}
+            targetBot.stopDigging();
+        } catch (error) {
+            // Бот мог уже отключиться.
+        }
     }
 }
 
@@ -185,7 +194,7 @@ function getTargetEntity(currentBot) {
 }
 
 function isInteractiveBlock(block) {
-    if (!block) return false;
+    if (!block || !block.name) return false;
 
     const name = block.name.toLowerCase();
 
@@ -197,6 +206,10 @@ function isInteractiveBlock(block) {
         /beehive|bee_nest|note_block|jukebox/.test(name) ||
         /hopper|dispenser|dropper|bell|composter/.test(name)
     );
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function leftClick(currentBot) {
@@ -211,21 +224,21 @@ async function leftClick(currentBot) {
             currentBot.swingArm('right');
         } catch (error) {}
 
-        await new Promise(resolve => setTimeout(resolve, 450));
+        await wait(450);
         return;
     }
 
     const block = currentBot.blockAtCursor(5);
 
     if (!block || block.name === 'air') {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await wait(100);
         return;
     }
 
     try {
         await currentBot.dig(block);
     } catch (error) {
-        // Блок мог исчезнуть или бот мог прекратить копание.
+        // Блок исчез или копание было прервано.
     }
 }
 
@@ -243,7 +256,7 @@ async function rightClick(currentBot) {
             }
         } catch (error) {}
 
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await wait(300);
         return;
     }
 
@@ -255,25 +268,23 @@ async function rightClick(currentBot) {
             currentBot.activateItem();
         } catch (error) {}
 
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await wait(300);
         return;
     }
 
     try {
-        // Сундуки, двери, верстаки, кнопки и другие интерактивные блоки.
         if (isInteractiveBlock(block)) {
             await currentBot.activateBlock(block);
-        }
-        // Если в руке блок — пытаемся поставить его.
-        else if (
+        } else if (
             heldItem &&
             currentBot.registry &&
             currentBot.registry.blocksByName[heldItem.name]
         ) {
-            await currentBot.placeBlock(block, new Vec3(0, 1, 0));
-        }
-        // Еда, лук, инструменты и прочие предметы.
-        else if (heldItem) {
+            await currentBot.placeBlock(
+                block,
+                new Vec3(0, 1, 0)
+            );
+        } else if (heldItem) {
             try {
                 await currentBot.activateBlock(block);
             } catch (error) {}
@@ -287,10 +298,10 @@ async function rightClick(currentBot) {
             currentBot.swingArm('right');
         } catch (error) {}
     } catch (error) {
-        // Например, если место установки занято.
+        // Например, место установки занято.
     }
 
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await wait(300);
 }
 
 async function runMouseLoop(button, currentBot, io) {
@@ -315,16 +326,19 @@ async function runMouseLoop(button, currentBot, io) {
 
                 if (now - lastMouseError > 3000) {
                     lastMouseError = now;
-                    log(io, 'Ошибка действия мыши: ' + error.message);
+
+                    log(
+                        io,
+                        'Ошибка действия мыши: ' + error.message
+                    );
                 }
 
-                await new Promise(resolve => setTimeout(resolve, 250));
+                await wait(250);
             }
         }
     } finally {
         mouseLoops[button] = false;
 
-        // Если кнопку нажали снова, пока предыдущий цикл завершался.
         if (
             bot === currentBot &&
             state === 'online' &&
@@ -370,7 +384,11 @@ function startBot(io, config) {
         };
     }
 
-    update(io, 'connecting', `Подключаемся к ${host}:${port}...`);
+    update(
+        io,
+        'connecting',
+        `Подключаемся к ${host}:${port}...`
+    );
 
     try {
         const currentBot = mineflayer.createBot({
@@ -411,7 +429,11 @@ function startBot(io, config) {
                     log(io, '3D-просмотрщик запущен на порту 3007');
                 } catch (error) {
                     viewerStarted = false;
-                    log(io, 'Ошибка просмотрщика: ' + error.message);
+
+                    log(
+                        io,
+                        'Ошибка просмотрщика: ' + error.message
+                    );
                 }
             }
 
@@ -419,25 +441,38 @@ function startBot(io, config) {
             sendVitals(io);
 
             const look = getLookState();
-            if (look) io.emit('lookState', look);
+
+            if (look && io) {
+                io.emit('lookState', look);
+            }
 
             currentBot.inventory.on('updateSlot', () => {
-                if (bot === currentBot) sendInventory(io);
+                if (bot === currentBot) {
+                    sendInventory(io);
+                }
             });
 
             currentBot.on('heldItemChanged', () => {
-                if (bot === currentBot) sendInventory(io);
+                if (bot === currentBot) {
+                    sendInventory(io);
+                }
             });
 
             currentBot.on('health', () => {
-                if (bot === currentBot) sendVitals(io);
+                if (bot === currentBot) {
+                    sendVitals(io);
+                }
             });
 
             currentBot.on('food', () => {
-                if (bot === currentBot) sendVitals(io);
+                if (bot === currentBot) {
+                    sendVitals(io);
+                }
             });
 
-            if (typeof currentBot.waitForChunksToLoad === 'function') {
+            if (
+                typeof currentBot.waitForChunksToLoad === 'function'
+            ) {
                 currentBot.waitForChunksToLoad()
                     .then(() => {
                         if (bot === currentBot) {
@@ -446,7 +481,10 @@ function startBot(io, config) {
                     })
                     .catch(error => {
                         if (bot === currentBot) {
-                            log(io, 'Ошибка чанков: ' + error.message);
+                            log(
+                                io,
+                                'Ошибка чанков: ' + error.message
+                            );
                         }
                     });
             }
@@ -455,19 +493,27 @@ function startBot(io, config) {
         currentBot.on('kicked', reason => {
             if (bot !== currentBot) return;
 
-            update(io, 'error', 'Сервер отклонил вход: ' + String(reason));
+            update(
+                io,
+                'error',
+                'Сервер отклонил вход: ' + String(reason)
+            );
         });
 
         currentBot.on('error', error => {
             if (bot !== currentBot) return;
 
-            update(io, 'error', 'Ошибка Minecraft: ' + error.message);
+            update(
+                io,
+                'error',
+                'Ошибка Minecraft: ' + error.message
+            );
         });
 
         currentBot.once('end', reason => {
             if (bot !== currentBot) return;
 
-            releaseMouseActions();
+            releaseMouseActions(currentBot);
             closeViewer(currentBot, io);
 
             bot = null;
@@ -478,11 +524,13 @@ function startBot(io, config) {
                 'Соединение закрыто: ' + String(reason || '')
             );
 
-            io.emit('inventory', {
-                slots: [],
-                selected: 0,
-                heldItem: null
-            });
+            if (io) {
+                io.emit('inventory', {
+                    slots: [],
+                    selected: 0,
+                    heldItem: null
+                });
+            }
 
             sendVitals(io);
         });
@@ -508,7 +556,11 @@ function controlBot(control, pressed) {
     if (!bot || state !== 'online') return;
     if (!allowedControls.includes(control)) return;
 
-    bot.setControlState(control, Boolean(pressed));
+    try {
+        bot.setControlState(control, Boolean(pressed));
+    } catch (error) {
+        console.log('Ошибка управления:', error.message);
+    }
 }
 
 function lookBot(data) {
@@ -521,7 +573,9 @@ function lookBot(data) {
 
     const safePitch = Math.max(-1.5, Math.min(1.5, pitch));
 
-    bot.look(yaw, safePitch, true);
+    try {
+        bot.look(yaw, safePitch, true);
+    } catch (error) {}
 }
 
 function selectSlot(slot, io) {
@@ -529,19 +583,31 @@ function selectSlot(slot, io) {
 
     const number = Number(slot);
 
-    if (!Number.isInteger(number) || number < 0 || number > 8) return;
+    if (!Number.isInteger(number) || number < 0 || number > 8) {
+        return;
+    }
 
-    bot.setQuickBarSlot(number);
-    sendInventory(io);
+    try {
+        bot.setQuickBarSlot(number);
+        sendInventory(io);
+    } catch (error) {
+        log(io, 'Ошибка выбора слота: ' + error.message);
+    }
 }
 
 function releaseControls() {
     if (!bot) return;
 
-    try {
-        bot.clearControlStates();
-    } catch (error) {
-        console.log('Ошибка сброса управления:', error.message);
+    for (const control of allowedControls) {
+        try {
+            bot.setControlState(control, false);
+        } catch (error) {
+            console.log(
+                'Ошибка сброса управления:',
+                control,
+                error.message
+            );
+        }
     }
 }
 
@@ -553,14 +619,16 @@ function stopBot(io) {
 
     const currentBot = bot;
 
-    releaseMouseActions();
+    releaseMouseActions(currentBot);
     bot = null;
 
     update(io, 'stopping', 'Отключаем бота...');
 
-    try {
-        currentBot.clearControlStates();
-    } catch (error) {}
+    for (const control of allowedControls) {
+        try {
+            currentBot.setControlState(control, false);
+        } catch (error) {}
+    }
 
     closeViewer(currentBot, io);
 
@@ -574,18 +642,20 @@ function stopBot(io) {
         log(io, 'Ошибка отключения: ' + error.message);
     }
 
-    io.emit('inventory', {
-        slots: [],
-        selected: 0,
-        heldItem: null
-    });
+    if (io) {
+        io.emit('inventory', {
+            slots: [],
+            selected: 0,
+            heldItem: null
+        });
 
-    io.emit('vitals', {
-        health: 0,
-        food: 0,
-        maxHealth: 20,
-        maxFood: 20
-    });
+        io.emit('vitals', {
+            health: 0,
+            food: 0,
+            maxHealth: 20,
+            maxFood: 20
+        });
+    }
 
     update(io, 'offline', 'Бот остановлен');
 }
