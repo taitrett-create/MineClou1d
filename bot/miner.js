@@ -245,34 +245,21 @@ function isInteractiveBlock(block) {
 async function leftClick(currentBot) {
     if (!currentBot.entity) return;
 
-    const entity = getTargetEntity(currentBot);
-
-    if (entity && entity !== currentBot.entity) {
-        if (typeof currentBot.attack === 'function') {
-            currentBot.attack(entity);
-        }
-
-        if (typeof currentBot.swingArm === 'function') {
-            currentBot.swingArm('right');
-        }
-
-        await wait(450);
-        return;
-    }
-
+    // ЛКМ теперь только для копания блоков.
+    // Атака сущностей отключена, чтобы проверить причину кика.
     if (typeof currentBot.blockAtCursor !== 'function') {
         throw new Error('Метод blockAtCursor отсутствует');
+    }
+
+    if (typeof currentBot.dig !== 'function') {
+        throw new Error('Метод dig отсутствует');
     }
 
     const block = currentBot.blockAtCursor(5);
 
     if (!block || block.name === 'air') {
-        await wait(100);
+        await wait(150);
         return;
-    }
-
-    if (typeof currentBot.dig !== 'function') {
-        throw new Error('Метод dig отсутствует');
     }
 
     await currentBot.dig(block);
@@ -382,6 +369,38 @@ async function runMouseLoop(button, currentBot, io) {
     }
 }
 
+function printDiagnostics(currentBot) {
+    console.log('\n========== MINECLOUD DIAGNOSTICS ==========');
+    console.log('Package:', require.resolve('@wp2508/mineflayer'));
+
+    for (const method of [
+        'setControlState',
+        'clearControlStates',
+        'look',
+        'quit',
+        'end',
+        'setQuickBarSlot',
+        'dig',
+        'attack',
+        'blockAtCursor',
+        'entityAtCursor',
+        'activateItem',
+        'activateBlock',
+        'activateEntity',
+        'placeBlock',
+        'swingArm',
+        'stopDigging',
+        'waitForChunksToLoad'
+    ]) {
+        console.log(method + ':', typeof currentBot[method]);
+    }
+
+    console.log('Entity exists:', !!currentBot.entity);
+    console.log('Inventory exists:', !!currentBot.inventory);
+    console.log('Bot keys:', Object.keys(currentBot).slice(0, 40));
+    console.log('===========================================\n');
+}
+
 function startBot(io, config) {
     if (bot) {
         return {
@@ -415,32 +434,14 @@ function startBot(io, config) {
             version: '1.21.4'
         });
 
-        console.log('\n========== MINECLOUD DIAGNOSTICS ==========');
-        console.log('Package:', require.resolve('@wp2508/mineflayer'));
-
-        for (const method of [
-            'setControlState',
-            'clearControlStates',
-            'look',
-            'quit',
-            'end',
-            'setQuickBarSlot',
-            'dig',
-            'attack',
-            'blockAtCursor',
-            'activateItem',
-            'placeBlock'
-        ]) {
-            console.log(method + ':', typeof currentBot[method]);
-        }
-
-        console.log('===========================================\n');
-
         bot = currentBot;
         viewerStarted = false;
         viewerReady = false;
         mousePressed.left = false;
         mousePressed.right = false;
+
+        // Первая диагностика сразу после создания.
+        printDiagnostics(currentBot);
 
         currentBot.once('login', () => {
             if (bot === currentBot) {
@@ -452,6 +453,9 @@ function startBot(io, config) {
             if (bot !== currentBot) return;
 
             update(io, 'online', 'Бот появился в мире!');
+
+            // Повторная диагностика после появления в мире.
+            printDiagnostics(currentBot);
 
             if (!viewerStarted) {
                 viewerStarted = true;
