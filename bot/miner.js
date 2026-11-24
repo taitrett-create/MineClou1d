@@ -32,16 +32,13 @@ let lastMouseError = 0;
 
 function log(io, text) {
     const entry = `[${new Date().toLocaleTimeString()}] ${text}`;
-
     console.log('[MineCloud]', entry);
-
     if (io) io.emit('log', entry);
 }
 
 function update(io, newState, newMessage) {
     state = newState;
     message = newMessage;
-
     log(io, newMessage);
 
     if (io) {
@@ -151,14 +148,11 @@ function releaseMouseActions() {
     mousePressed.right = false;
 
     const currentBot = bot;
-
     if (!currentBot || !currentBot.entity) return;
 
     try {
         currentBot.stopDigging();
-    } catch (error) {
-        // Соединение могло закрыться.
-    }
+    } catch (error) {}
 }
 
 function setMouseAction(button, pressed, io) {
@@ -228,9 +222,7 @@ async function leftClick(currentBot) {
 
     try {
         await currentBot.dig(block);
-    } catch (error) {
-        // Блок мог исчезнуть или копание могло завершиться.
-    }
+    } catch (error) {}
 }
 
 async function rightClick(currentBot) {
@@ -285,9 +277,7 @@ async function rightClick(currentBot) {
         try {
             currentBot.swingArm('right');
         } catch (error) {}
-    } catch (error) {
-        // Например, если место установки занято.
-    }
+    } catch (error) {}
 
     await new Promise(resolve => setTimeout(resolve, 300));
 }
@@ -387,7 +377,6 @@ function startBot(io, config) {
 
         currentBot.once('login', () => {
             if (bot !== currentBot) return;
-
             update(io, 'online', 'Бот вошёл на сервер!');
         });
 
@@ -472,7 +461,6 @@ function startBot(io, config) {
             mousePressed.right = false;
 
             closeViewer(currentBot, io);
-
             bot = null;
 
             update(
@@ -547,10 +535,10 @@ function selectSlot(slot, io) {
 function releaseControls() {
     if (!bot) return;
 
-    try {
-        bot.clearControlStates();
-    } catch (error) {
-        console.log('Ошибка сброса управления:', error.message);
+    for (const control of allowedControls) {
+        try {
+            bot.setControlState(control, false);
+        } catch (error) {}
     }
 }
 
@@ -569,9 +557,11 @@ function stopBot(io) {
 
     update(io, 'stopping', 'Отключаем бота...');
 
-    try {
-        currentBot.clearControlStates();
-    } catch (error) {}
+    for (const control of allowedControls) {
+        try {
+            currentBot.setControlState(control, false);
+        } catch (error) {}
+    }
 
     closeViewer(currentBot, io);
 
