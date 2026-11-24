@@ -166,7 +166,6 @@ function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Ждём, пока локальный сервер просмотрщика начнёт принимать соединения.
 function waitForViewer(maxAttempts = 30) {
     return new Promise((resolve, reject) => {
         let attempts = 0;
@@ -200,7 +199,6 @@ function waitForViewer(maxAttempts = 30) {
     });
 }
 
-// Сброс мыши. deactivateItem() не вызываем.
 function releaseMouseActions(targetBot = bot) {
     mousePressed.left = false;
     mousePressed.right = false;
@@ -429,6 +427,20 @@ function startBot(io, config) {
             auth: 'offline',
             version: '1.21.4'
         });
+
+        // ДИАГНОСТИКА: проверяем методы созданного бота
+        console.log('');
+        console.log('========== MINECLOUD DIAGNOSTICS ==========');
+        console.log('Package:', require.resolve('@wp2508/mineflayer'));
+        console.log('Bot type:', typeof currentBot);
+        console.log('Bot constructor:', currentBot?.constructor?.name);
+        console.log('setControlState:', typeof currentBot?.setControlState);
+        console.log('clearControlStates:', typeof currentBot?.clearControlStates);
+        console.log('look:', typeof currentBot?.look);
+        console.log('quit:', typeof currentBot?.quit);
+        console.log('end:', typeof currentBot?.end);
+        console.log('===========================================');
+        console.log('');
 
         bot = currentBot;
         viewerStarted = false;
