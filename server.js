@@ -1,3 +1,4 @@
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -5,11 +6,18 @@ const miner = require('./bot/miner');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+
+const io = new Server(server, {
+    pingInterval: 25000,
+    pingTimeout: 60000,
+    connectTimeout: 30000
+});
 
 app.use(express.static('public'));
 
 io.on('connection', socket => {
+    console.log('[MineCloud] Сайт подключился:', socket.id);
+
     socket.emit('status', miner.getStatus());
     socket.emit('inventory', miner.getInventory());
     socket.emit('vitals', miner.getVitals());
@@ -48,9 +56,15 @@ io.on('connection', socket => {
         miner.releaseMouseActions();
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', reason => {
+        console.log('[MineCloud] Сайт отключился:', reason);
+
         miner.releaseControls();
         miner.releaseMouseActions();
+    });
+
+    socket.on('error', error => {
+        console.log('[MineCloud] Ошибка Socket.IO:', error.message);
     });
 });
 
