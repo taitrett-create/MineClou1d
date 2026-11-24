@@ -1,4 +1,3 @@
-
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const Vec3 = require('vec3');
@@ -32,13 +31,16 @@ let lastMouseError = 0;
 
 function log(io, text) {
     const entry = `[${new Date().toLocaleTimeString()}] ${text}`;
+
     console.log('[MineCloud]', entry);
+
     if (io) io.emit('log', entry);
 }
 
 function update(io, newState, newMessage) {
     state = newState;
     message = newMessage;
+
     log(io, newMessage);
 
     if (io) {
@@ -147,17 +149,17 @@ function releaseMouseActions() {
     mousePressed.left = false;
     mousePressed.right = false;
 
-    const currentBot = bot;
-    if (!currentBot || !currentBot.entity) return;
-
-    try {
-        currentBot.stopDigging();
-    } catch (error) {}
+    if (bot) {
+        try {
+            bot.stopDigging();
+            bot.deactivateItem();
+        } catch (error) {}
+    }
 }
 
 function setMouseAction(button, pressed, io) {
     if (!['left', 'right'].includes(button)) return;
-    if (!bot || !bot.entity || state !== 'online') return;
+    if (!bot || state !== 'online') return;
 
     mousePressed[button] = Boolean(pressed);
 
@@ -222,7 +224,9 @@ async function leftClick(currentBot) {
 
     try {
         await currentBot.dig(block);
-    } catch (error) {}
+    } catch (error) {
+        // Блок мог исчезнуть или бот мог прекратить копание.
+    }
 }
 
 async function rightClick(currentBot) {
@@ -256,15 +260,20 @@ async function rightClick(currentBot) {
     }
 
     try {
+        // Сундуки, двери, верстаки, кнопки и другие интерактивные блоки.
         if (isInteractiveBlock(block)) {
             await currentBot.activateBlock(block);
-        } else if (
+        }
+        // Если в руке блок — пытаемся поставить его.
+        else if (
             heldItem &&
             currentBot.registry &&
             currentBot.registry.blocksByName[heldItem.name]
         ) {
             await currentBot.placeBlock(block, new Vec3(0, 1, 0));
-        } else if (heldItem) {
+        }
+        // Еда, лук, инструменты и прочие предметы.
+        else if (heldItem) {
             try {
                 await currentBot.activateBlock(block);
             } catch (error) {}
@@ -277,7 +286,9 @@ async function rightClick(currentBot) {
         try {
             currentBot.swingArm('right');
         } catch (error) {}
-    } catch (error) {}
+    } catch (error) {
+        // Например, если место установки занято.
+    }
 
     await new Promise(resolve => setTimeout(resolve, 300));
 }
@@ -313,6 +324,7 @@ async function runMouseLoop(button, currentBot, io) {
     } finally {
         mouseLoops[button] = false;
 
+        // Если кнопку нажали снова, пока предыдущий цикл завершался.
         if (
             bot === currentBot &&
             state === 'online' &&
@@ -377,6 +389,7 @@ function startBot(io, config) {
 
         currentBot.once('login', () => {
             if (bot !== currentBot) return;
+
             update(io, 'online', 'Бот вошёл на сервер!');
         });
 
@@ -392,8 +405,7 @@ function startBot(io, config) {
                     startViewer(currentBot, {
                         port: 3007,
                         firstPerson: true,
-                        viewDistance: 6,
-                        prefix: '/viewer'
+                        viewDistance: 6
                     });
 
                     log(io, '3D-просмотрщик запущен на порту 3007');
@@ -443,9 +455,6 @@ function startBot(io, config) {
         currentBot.on('kicked', reason => {
             if (bot !== currentBot) return;
 
-            mousePressed.left = false;
-            mousePressed.right = false;
-
             update(io, 'error', 'Сервер отклонил вход: ' + String(reason));
         });
 
@@ -458,10 +467,9 @@ function startBot(io, config) {
         currentBot.once('end', reason => {
             if (bot !== currentBot) return;
 
-            mousePressed.left = false;
-            mousePressed.right = false;
-
+            releaseMouseActions();
             closeViewer(currentBot, io);
+
             bot = null;
 
             update(
@@ -500,9 +508,7 @@ function controlBot(control, pressed) {
     if (!bot || state !== 'online') return;
     if (!allowedControls.includes(control)) return;
 
-    try {
-        bot.setControlState(control, Boolean(pressed));
-    } catch (error) {}
+    bot.setControlState(control, Boolean(pressed));
 }
 
 function lookBot(data) {
@@ -515,9 +521,7 @@ function lookBot(data) {
 
     const safePitch = Math.max(-1.5, Math.min(1.5, pitch));
 
-    try {
-        bot.look(yaw, safePitch, true);
-    } catch (error) {}
+    bot.look(yaw, safePitch, true);
 }
 
 function selectSlot(slot, io) {
@@ -527,19 +531,17 @@ function selectSlot(slot, io) {
 
     if (!Number.isInteger(number) || number < 0 || number > 8) return;
 
-    try {
-        bot.setQuickBarSlot(number);
-        sendInventory(io);
-    } catch (error) {}
+    bot.setQuickBarSlot(number);
+    sendInventory(io);
 }
 
 function releaseControls() {
     if (!bot) return;
 
-    for (const control of allowedControls) {
-        try {
-            bot.setControlState(control, false);
-        } catch (error) {}
+    try {
+        bot.clearControlStates();
+    } catch (error) {
+        console.log('Ошибка сброса управления:', error.message);
     }
 }
 
@@ -551,18 +553,14 @@ function stopBot(io) {
 
     const currentBot = bot;
 
-    mousePressed.left = false;
-    mousePressed.right = false;
-
+    releaseMouseActions();
     bot = null;
 
     update(io, 'stopping', 'Отключаем бота...');
 
-    for (const control of allowedControls) {
-        try {
-            currentBot.setControlState(control, false);
-        } catch (error) {}
-    }
+    try {
+        currentBot.clearControlStates();
+    } catch (error) {}
 
     closeViewer(currentBot, io);
 
