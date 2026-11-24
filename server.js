@@ -16,11 +16,105 @@ const io = new Server(server, {
     connectTimeout: 30000
 });
 
+const VIEWER_HOST = '127.0.0.1';
+const VIEWER_PORT = 3007;
+
 app.use(express.static('public'));
 
+// HTTP-прокси для страницы, файлов и ресурсов просмотрщика
+app.use('/viewer', (req, res) => {
+    const proxyRequest = http.request({
+        hostname: VIEWER_HOST,
+        port: VIEWER_PORT,
+        path: req.originalUrl,
+        method: req.method,
+        headers: {
+            ...req.headers,
+            host: `${VIEWER_HOST}:${VIEWER_PORT}`
+        }
+    }, proxyResponse => {
+        res.writeHead(
+            proxyResponse.statusCode || 502,
+            proxyResponse.headers
+        );
+
+        proxyResponse.pipe(res);
+    });
+
+    proxyRequest.on('error', error => {
+        console.log('[VIEWER PROXY] HTTP:', error.message);
+
+        if (!res.headersSent) {
+            res.status(503).send(
+                '3D-просмотрщик ещё не запущен. Подожди появления бота в мире.'
+            );
+        }
+    });
+
+    req.pipe(proxyRequest);
+});
+
+// WebSocket-прокси для передачи чанков и обновлений мира
+server.on('upgrade', (req, clientSocket, head) => {
+    let pathname;
+
+    try {
+        pathname = new URL(
+            req.url,
+            'http://localhost'
+        ).pathname;
+    } catch (error) {
+        return;
+    }
+
+    if (!pathname.startsWith('/viewer/')) {
+        return;
+    }
+
+    const viewerSocket = net.connect(
+        VIEWER_PORT,
+        VIEWER_HOST
+    );
+
+    viewerSocket.once('connect', () => {
+        const headers = Object.entries(req.headers)
+            .map(([name, value]) => {
+                return `${name}: ${Array.isArray(value)
+                    ? value.join(', ')
+                    : value}`;
+            })
+            .join('\r\n');
+
+        viewerSocket.write(
+            `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+            `${headers}\r\n\r\n`
+        );
+
+        if (head && head.length) {
+            viewerSocket.write(head);
+        }
+
+        clientSocket.pipe(viewerSocket);
+        viewerSocket.pipe(clientSocket);
+    });
+
+    viewerSocket.on('error', error => {
+        console.log('[VIEWER PROXY] WebSocket:', error.message);
+        clientSocket.destroy();
+    });
+
+    clientSocket.on('error', () => {
+        viewerSocket.destroy();
+    });
+
+    clientSocket.on('close', () => {
+        viewerSocket.destroy();
+    });
+});
+
+// Проверка DNS и TCP до Aternos
 let startInProgress = false;
 
-// Проверка DNS и TCP-подключения к Minecraft
 async function testMinecraftConnection(host, port) {
     console.log(`[NETWORK] Проверяем DNS: ${host}`);
 
@@ -65,16 +159,15 @@ async function testMinecraftConnection(host, port) {
                 });
 
                 connection.once('timeout', () => {
-                    connection.destroy(
-                        new Error('TCP_TIMEOUT')
-                    );
+                    const error = new Error('TCP_TIMEOUT');
+                    error.code = 'TCP_TIMEOUT';
+                    connection.destroy(error);
                 });
 
                 connection.once('error', reject);
             });
 
             return address.address;
-
         } catch (error) {
             lastError = error;
 
@@ -101,7 +194,12 @@ io.on('connection', socket => {
         socket.emit('lookState', look);
     }
 
-    // Запуск бота с предварительной проверкой сети
+    // Если бот уже в мире, сообщаем новому посетителю,
+    // что просмотрщик готов.
+    if (miner.isViewerReady()) {
+        socket.emit('viewerReady');
+    }
+
     socket.on('startBot', async config => {
         if (startInProgress) {
             socket.emit('actionResult', {
@@ -124,8 +222,12 @@ io.on('connection', socket => {
         const host = String(config.host || '').trim();
         const port = Number(config.port);
 
-        if (!host || !Number.isInteger(port) ||
-            port < 1 || port > 65535) {
+        if (
+            !host ||
+            !Number.isInteger(port) ||
+            port < 1 ||
+            port > 65535
+        ) {
             socket.emit('actionResult', {
                 success: false,
                 message: 'Проверь IP и порт сервера'
@@ -136,7 +238,10 @@ io.on('connection', socket => {
         startInProgress = true;
 
         try {
-            io.emit('log', 'Проверяем подключение Render → Aternos...');
+            io.emit(
+                'log',
+                'Проверяем подключение Render → Aternos...'
+            );
 
             const ip = await testMinecraftConnection(host, port);
 
@@ -148,11 +253,13 @@ io.on('connection', socket => {
             const result = miner.startBot(io, config);
 
             socket.emit('actionResult', result);
-
         } catch (error) {
             const reason = error.code || error.message;
 
-            console.log('[NETWORK] Проверка не пройдена:', reason);
+            console.log(
+                '[NETWORK] Проверка не пройдена:',
+                reason
+            );
 
             io.emit(
                 'log',
@@ -163,7 +270,6 @@ io.on('connection', socket => {
                 success: false,
                 message: `Render не смог подключиться к Aternos: ${reason}`
             });
-
         } finally {
             startInProgress = false;
         }
@@ -209,7 +315,10 @@ io.on('connection', socket => {
     });
 
     socket.on('error', error => {
-        console.log('[MineCloud] Ошибка Socket.IO:', error.message);
+        console.log(
+            '[MineCloud] Ошибка Socket.IO:',
+            error.message
+        );
     });
 });
 
