@@ -1,3 +1,4 @@
+
 const socket = io();
 
 const statusElement = document.getElementById('status');
@@ -9,6 +10,7 @@ const stopButton = document.getElementById('stop');
 
 const mouseLayer = document.getElementById('mouseLayer');
 const screenHint = document.getElementById('screenHint');
+const viewerFrame = document.getElementById('viewer');
 
 const hotbar = document.getElementById('hotbar');
 const inventoryGrid = document.getElementById('inventoryGrid');
@@ -23,6 +25,7 @@ const heldItemCount = document.getElementById('heldItemCount');
 
 let yaw = 0;
 let pitch = 0;
+let viewerLoaded = false;
 
 const pressedKeys = new Set();
 
@@ -64,6 +67,18 @@ function addLog(message) {
     while (logList.children.length > 40) {
         logList.lastElementChild.remove();
     }
+}
+
+function loadViewer() {
+    if (viewerLoaded) return;
+
+    viewerLoaded = true;
+
+    addLog('Открываем 3D-просмотрщик Minecraft...');
+
+    viewerFrame.src = '/viewer/';
+
+    messageElement.textContent = 'Загружаем 3D-мир Minecraft...';
 }
 
 function syncMouse(button) {
@@ -138,6 +153,11 @@ socket.on('status', data => {
         data.online ? '#22c55e' : '#ff5555';
 
     messageElement.textContent = data.message;
+
+    if (data.state === 'offline' || data.state === 'error') {
+        viewerLoaded = false;
+        viewerFrame.src = 'about:blank';
+    }
 });
 
 socket.on('log', addLog);
@@ -145,6 +165,11 @@ socket.on('log', addLog);
 socket.on('actionResult', data => {
     messageElement.textContent = data.message;
     addLog(data.message);
+});
+
+// Сервер сообщает, что локальный просмотрщик действительно запущен.
+socket.on('viewerReady', () => {
+    loadViewer();
 });
 
 socket.on('lookState', data => {
@@ -185,6 +210,9 @@ startButton.addEventListener('click', () => {
         return;
     }
 
+    viewerLoaded = false;
+    viewerFrame.src = 'about:blank';
+
     socket.emit('startBot', config);
     addLog('Отправлена команда START');
 });
@@ -193,6 +221,9 @@ startButton.addEventListener('click', () => {
 stopButton.addEventListener('click', () => {
     releaseAllKeys();
     releaseAllMouse();
+
+    viewerLoaded = false;
+    viewerFrame.src = 'about:blank';
 
     socket.emit('stopBot');
 
@@ -388,7 +419,6 @@ function renderInventory(data) {
 
     selectHotbar(data.selected || 0);
 
-    // Отображение предмета в руке
     const held = data.heldItem;
 
     if (held) {
