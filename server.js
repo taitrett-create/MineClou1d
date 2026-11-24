@@ -2,7 +2,6 @@
 const express = require('express');
 const http = require('http');
 const net = require('net');
-const dns = require('dns').promises;
 
 const { Server } = require('socket.io');
 const miner = require('./bot/miner');
@@ -21,7 +20,7 @@ const VIEWER_PORT = 3007;
 
 app.use(express.static('public'));
 
-// HTTP-прокси для страницы, файлов и ресурсов просмотрщика
+// HTTP-прокси 3D-просмотрщика
 app.use('/viewer', (req, res) => {
     const proxyRequest = http.request({
         hostname: VIEWER_HOST,
@@ -54,7 +53,7 @@ app.use('/viewer', (req, res) => {
     req.pipe(proxyRequest);
 });
 
-// WebSocket-прокси для передачи чанков и обновлений мира
+// WebSocket-прокси 3D-просмотрщика
 server.on('upgrade', (req, clientSocket, head) => {
     let pathname;
 
@@ -112,74 +111,7 @@ server.on('upgrade', (req, clientSocket, head) => {
     });
 });
 
-// Проверка DNS и TCP до Aternos
 let startInProgress = false;
-
-async function testMinecraftConnection(host, port) {
-    console.log(`[NETWORK] Проверяем DNS: ${host}`);
-
-    const addresses = await dns.lookup(host, {
-        all: true,
-        verbatim: true
-    });
-
-    if (!addresses.length) {
-        throw new Error('DNS не вернул IP-адреса');
-    }
-
-    console.log(
-        '[NETWORK] Найдены IP:',
-        addresses.map(a => a.address).join(', ')
-    );
-
-    let lastError = null;
-
-    for (const address of addresses) {
-        console.log(
-            `[NETWORK] Проверяем TCP ${address.address}:${port}`
-        );
-
-        try {
-            await new Promise((resolve, reject) => {
-                const connection = net.createConnection({
-                    host: address.address,
-                    port,
-                    family: address.family
-                });
-
-                connection.setTimeout(8000);
-
-                connection.once('connect', () => {
-                    console.log(
-                        `[NETWORK] TCP УСПЕХ: ${address.address}:${port}`
-                    );
-
-                    connection.destroy();
-                    resolve();
-                });
-
-                connection.once('timeout', () => {
-                    const error = new Error('TCP_TIMEOUT');
-                    error.code = 'TCP_TIMEOUT';
-                    connection.destroy(error);
-                });
-
-                connection.once('error', reject);
-            });
-
-            return address.address;
-        } catch (error) {
-            lastError = error;
-
-            console.log(
-                `[NETWORK] TCP ОШИБКА ${address.address}:`,
-                error.code || error.message
-            );
-        }
-    }
-
-    throw lastError || new Error('TCP-подключение не удалось');
-}
 
 io.on('connection', socket => {
     console.log('[MineCloud] Сайт подключился:', socket.id);
@@ -194,17 +126,15 @@ io.on('connection', socket => {
         socket.emit('lookState', look);
     }
 
-    // Если бот уже в мире, сообщаем новому посетителю,
-    // что просмотрщик готов.
     if (miner.isViewerReady()) {
         socket.emit('viewerReady');
     }
 
-    socket.on('startBot', async config => {
+    socket.on('startBot', config => {
         if (startInProgress) {
             socket.emit('actionResult', {
                 success: false,
-                message: 'Проверка подключения уже выполняется'
+                message: 'Бот уже запускается'
             });
             return;
         }
@@ -240,43 +170,36 @@ io.on('connection', socket => {
         try {
             io.emit(
                 'log',
-                'Проверяем подключение Render → Aternos...'
+                'Запускаем Mineflayer без предварительной TCP-проверки...'
             );
 
-            const ip = await testMinecraftConnection(host, port);
-
-            io.emit(
-                'log',
-                `TCP-подключение успешно! IP: ${ip}`
-            );
+            console.log('[MineCloud] Запуск бота:', host, port);
 
             const result = miner.startBot(io, config);
 
             socket.emit('actionResult', result);
+
+            if (!result || !result.success) {
+                startInProgress = false;
+            }
         } catch (error) {
-            const reason = error.code || error.message;
-
             console.log(
-                '[NETWORK] Проверка не пройдена:',
-                reason
-            );
-
-            io.emit(
-                'log',
-                `Ошибка проверки сети: ${reason}`
+                '[MineCloud] Ошибка запуска:',
+                error.stack || error.message
             );
 
             socket.emit('actionResult', {
                 success: false,
-                message: `Render не смог подключиться к Aternos: ${reason}`
+                message: `Ошибка запуска: ${error.message}`
             });
-        } finally {
+
             startInProgress = false;
         }
     });
 
     socket.on('stopBot', () => {
         miner.stopBot(io);
+        startInProgress = false;
     });
 
     socket.on('control', data => {
@@ -325,5 +248,5 @@ io.on('connection', socket => {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`MineCloud запущен: http://localhost:${PORT}`);
+    console.log(`MineCloud запущен на порту ${PORT}`);
 });
