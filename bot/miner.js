@@ -1,3 +1,4 @@
+
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const Vec3 = require('vec3');
@@ -149,17 +150,20 @@ function releaseMouseActions() {
     mousePressed.left = false;
     mousePressed.right = false;
 
-    if (bot) {
-        try {
-            bot.stopDigging();
-            bot.deactivateItem();
-        } catch (error) {}
+    const currentBot = bot;
+
+    if (!currentBot || !currentBot.entity) return;
+
+    try {
+        currentBot.stopDigging();
+    } catch (error) {
+        // Соединение могло закрыться.
     }
 }
 
 function setMouseAction(button, pressed, io) {
     if (!['left', 'right'].includes(button)) return;
-    if (!bot || state !== 'online') return;
+    if (!bot || !bot.entity || state !== 'online') return;
 
     mousePressed[button] = Boolean(pressed);
 
@@ -225,7 +229,7 @@ async function leftClick(currentBot) {
     try {
         await currentBot.dig(block);
     } catch (error) {
-        // Блок мог исчезнуть или бот мог прекратить копание.
+        // Блок мог исчезнуть или копание могло завершиться.
     }
 }
 
@@ -260,20 +264,15 @@ async function rightClick(currentBot) {
     }
 
     try {
-        // Сундуки, двери, верстаки, кнопки и другие интерактивные блоки.
         if (isInteractiveBlock(block)) {
             await currentBot.activateBlock(block);
-        }
-        // Если в руке блок — пытаемся поставить его.
-        else if (
+        } else if (
             heldItem &&
             currentBot.registry &&
             currentBot.registry.blocksByName[heldItem.name]
         ) {
             await currentBot.placeBlock(block, new Vec3(0, 1, 0));
-        }
-        // Еда, лук, инструменты и прочие предметы.
-        else if (heldItem) {
+        } else if (heldItem) {
             try {
                 await currentBot.activateBlock(block);
             } catch (error) {}
@@ -324,7 +323,6 @@ async function runMouseLoop(button, currentBot, io) {
     } finally {
         mouseLoops[button] = false;
 
-        // Если кнопку нажали снова, пока предыдущий цикл завершался.
         if (
             bot === currentBot &&
             state === 'online' &&
@@ -455,6 +453,9 @@ function startBot(io, config) {
         currentBot.on('kicked', reason => {
             if (bot !== currentBot) return;
 
+            mousePressed.left = false;
+            mousePressed.right = false;
+
             update(io, 'error', 'Сервер отклонил вход: ' + String(reason));
         });
 
@@ -467,7 +468,9 @@ function startBot(io, config) {
         currentBot.once('end', reason => {
             if (bot !== currentBot) return;
 
-            releaseMouseActions();
+            mousePressed.left = false;
+            mousePressed.right = false;
+
             closeViewer(currentBot, io);
 
             bot = null;
@@ -508,7 +511,9 @@ function controlBot(control, pressed) {
     if (!bot || state !== 'online') return;
     if (!allowedControls.includes(control)) return;
 
-    bot.setControlState(control, Boolean(pressed));
+    try {
+        bot.setControlState(control, Boolean(pressed));
+    } catch (error) {}
 }
 
 function lookBot(data) {
@@ -521,7 +526,9 @@ function lookBot(data) {
 
     const safePitch = Math.max(-1.5, Math.min(1.5, pitch));
 
-    bot.look(yaw, safePitch, true);
+    try {
+        bot.look(yaw, safePitch, true);
+    } catch (error) {}
 }
 
 function selectSlot(slot, io) {
@@ -531,8 +538,10 @@ function selectSlot(slot, io) {
 
     if (!Number.isInteger(number) || number < 0 || number > 8) return;
 
-    bot.setQuickBarSlot(number);
-    sendInventory(io);
+    try {
+        bot.setQuickBarSlot(number);
+        sendInventory(io);
+    } catch (error) {}
 }
 
 function releaseControls() {
@@ -553,7 +562,9 @@ function stopBot(io) {
 
     const currentBot = bot;
 
-    releaseMouseActions();
+    mousePressed.left = false;
+    mousePressed.right = false;
+
     bot = null;
 
     update(io, 'stopping', 'Отключаем бота...');
