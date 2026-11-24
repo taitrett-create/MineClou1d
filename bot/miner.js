@@ -392,7 +392,8 @@ function startBot(io, config) {
                     startViewer(currentBot, {
                         port: 3007,
                         firstPerson: true,
-                        viewDistance: 6
+                        viewDistance: 6,
+                        prefix: '/viewer'
                     });
 
                     log(io, '3D-просмотрщик запущен на порту 3007');
