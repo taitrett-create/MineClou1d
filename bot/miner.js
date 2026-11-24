@@ -2,11 +2,15 @@
 const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const Vec3 = require('vec3');
+const net = require('net');
 
 let bot = null;
 let state = 'offline';
 let message = 'Бот не запущен';
 let viewerStarted = false;
+let viewerReady = false;
+
+const VIEWER_PORT = 3007;
 
 const allowedControls = [
     'forward',
@@ -61,6 +65,10 @@ function getStatus() {
         state,
         message
     };
+}
+
+function isViewerReady() {
+    return viewerReady;
 }
 
 function getLookState() {
@@ -136,6 +144,8 @@ function sendInventory(io) {
 }
 
 function closeViewer(currentBot, io) {
+    viewerReady = false;
+
     try {
         if (
             currentBot &&
@@ -152,7 +162,45 @@ function closeViewer(currentBot, io) {
     viewerStarted = false;
 }
 
-// Сброс мыши. ВАЖНО: deactivateItem() здесь не вызываем.
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Ждём, пока локальный сервер просмотрщика начнёт принимать соединения.
+function waitForViewer(maxAttempts = 30) {
+    return new Promise((resolve, reject) => {
+        let attempts = 0;
+
+        function check() {
+            attempts++;
+
+            const connection = net.createConnection({
+                host: '127.0.0.1',
+                port: VIEWER_PORT
+            });
+
+            connection.once('connect', () => {
+                connection.destroy();
+                resolve();
+            });
+
+            connection.once('error', () => {
+                connection.destroy();
+
+                if (attempts >= maxAttempts) {
+                    reject(new Error('Просмотрщик не открыл порт 3007'));
+                    return;
+                }
+
+                setTimeout(check, 300);
+            });
+        }
+
+        check();
+    });
+}
+
+// Сброс мыши. deactivateItem() не вызываем.
 function releaseMouseActions(targetBot = bot) {
     mousePressed.left = false;
     mousePressed.right = false;
@@ -160,9 +208,7 @@ function releaseMouseActions(targetBot = bot) {
     if (targetBot) {
         try {
             targetBot.stopDigging();
-        } catch (error) {
-            // Бот мог уже отключиться.
-        }
+        } catch (error) {}
     }
 }
 
@@ -208,10 +254,6 @@ function isInteractiveBlock(block) {
     );
 }
 
-function wait(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 async function leftClick(currentBot) {
     if (!currentBot.entity) return;
 
@@ -237,9 +279,7 @@ async function leftClick(currentBot) {
 
     try {
         await currentBot.dig(block);
-    } catch (error) {
-        // Блок исчез или копание было прервано.
-    }
+    } catch (error) {}
 }
 
 async function rightClick(currentBot) {
@@ -297,9 +337,7 @@ async function rightClick(currentBot) {
         try {
             currentBot.swingArm('right');
         } catch (error) {}
-    } catch (error) {
-        // Например, место установки занято.
-    }
+    } catch (error) {}
 
     await wait(300);
 }
@@ -377,13 +415,6 @@ function startBot(io, config) {
         };
     }
 
-    if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) {
-        return {
-            success: false,
-            message: 'Неправильный ник'
-        };
-    }
-
     update(
         io,
         'connecting',
@@ -401,6 +432,7 @@ function startBot(io, config) {
 
         bot = currentBot;
         viewerStarted = false;
+        viewerReady = false;
 
         mousePressed.left = false;
         mousePressed.right = false;
@@ -421,14 +453,32 @@ function startBot(io, config) {
 
                 try {
                     startViewer(currentBot, {
-                        port: 3007,
+                        port: VIEWER_PORT,
                         firstPerson: true,
-                        viewDistance: 6
+                        viewDistance: 6,
+                        prefix: '/viewer'
                     });
 
-                    log(io, '3D-просмотрщик запущен на порту 3007');
+                    log(io, 'Запускаем 3D-просмотрщик...');
+
+                    waitForViewer()
+                        .then(() => {
+                            if (bot !== currentBot) return;
+
+                            viewerReady = true;
+
+                            log(io, '3D-просмотрщик готов!');
+                            io.emit('viewerReady');
+                        })
+                        .catch(error => {
+                            if (bot !== currentBot) return;
+
+                            viewerReady = false;
+                            log(io, 'Ошибка запуска просмотрщика: ' + error.message);
+                        });
                 } catch (error) {
                     viewerStarted = false;
+                    viewerReady = false;
 
                     log(
                         io,
@@ -542,6 +592,7 @@ function startBot(io, config) {
     } catch (error) {
         bot = null;
         viewerStarted = false;
+        viewerReady = false;
 
         update(io, 'error', error.message);
 
@@ -667,6 +718,7 @@ module.exports = {
     getInventory,
     getVitals,
     getLookState,
+    isViewerReady,
     controlBot,
     lookBot,
     selectSlot,
