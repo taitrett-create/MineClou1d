@@ -3,6 +3,7 @@ const mineflayer = require('@wp2508/mineflayer');
 const { mineflayer: startViewer } = require('prismarine-viewer');
 const Vec3 = require('vec3');
 const net = require('net');
+const util = require('util');
 
 let bot = null;
 let state = 'offline';
@@ -13,41 +14,24 @@ let viewerReady = false;
 const VIEWER_PORT = 3007;
 
 const allowedControls = [
-    'forward',
-    'back',
-    'left',
-    'right',
-    'jump',
-    'sprint',
-    'sneak'
+    'forward', 'back', 'left', 'right',
+    'jump', 'sprint', 'sneak'
 ];
 
-const mousePressed = {
-    left: false,
-    right: false
-};
-
-const mouseLoops = {
-    left: false,
-    right: false
-};
+const mousePressed = { left: false, right: false };
+const mouseLoops = { left: false, right: false };
 
 let lastMouseError = 0;
 
 function log(io, text) {
     const entry = `[${new Date().toLocaleTimeString()}] ${text}`;
-
     console.log('[MineCloud]', entry);
-
-    if (io) {
-        io.emit('log', entry);
-    }
+    if (io) io.emit('log', entry);
 }
 
 function update(io, newState, newMessage) {
     state = newState;
     message = newMessage;
-
     log(io, newMessage);
 
     if (io) {
@@ -55,6 +39,19 @@ function update(io, newState, newMessage) {
             online: state === 'online',
             state,
             message
+        });
+    }
+}
+
+function describeReason(reason) {
+    if (typeof reason === 'string') return reason;
+
+    try {
+        return JSON.stringify(reason, null, 2);
+    } catch (error) {
+        return util.inspect(reason, {
+            depth: 8,
+            colors: false
         });
     }
 }
@@ -99,18 +96,12 @@ function getVitals() {
 }
 
 function sendVitals(io) {
-    if (io) {
-        io.emit('vitals', getVitals());
-    }
+    if (io) io.emit('vitals', getVitals());
 }
 
 function getInventory() {
     if (!bot || !bot.inventory) {
-        return {
-            slots: [],
-            selected: 0,
-            heldItem: null
-        };
+        return { slots: [], selected: 0, heldItem: null };
     }
 
     const slots = bot.inventory.slots.map((item, slot) => {
@@ -128,7 +119,7 @@ function getInventory() {
 
     return {
         slots,
-        selected: bot.quickBarSlot || 0,
+        selected: Number(bot.quickBarSlot) || 0,
         heldItem: held ? {
             name: held.name,
             displayName: held.displayName || held.name,
@@ -138,9 +129,7 @@ function getInventory() {
 }
 
 function sendInventory(io) {
-    if (io) {
-        io.emit('inventory', getInventory());
-    }
+    if (io) io.emit('inventory', getInventory());
 }
 
 function closeViewer(currentBot, io) {
@@ -188,10 +177,9 @@ function waitForViewer(maxAttempts = 30) {
 
                 if (attempts >= maxAttempts) {
                     reject(new Error('Просмотрщик не открыл порт 3007'));
-                    return;
+                } else {
+                    setTimeout(check, 300);
                 }
-
-                setTimeout(check, 300);
             });
         }
 
@@ -203,7 +191,7 @@ function releaseMouseActions(targetBot = bot) {
     mousePressed.left = false;
     mousePressed.right = false;
 
-    if (targetBot) {
+    if (targetBot && typeof targetBot.stopDigging === 'function') {
         try {
             targetBot.stopDigging();
         } catch (error) {}
@@ -218,7 +206,9 @@ function setMouseAction(button, pressed, io) {
 
     if (!pressed && button === 'left') {
         try {
-            bot.stopDigging();
+            if (typeof bot.stopDigging === 'function') {
+                bot.stopDigging();
+            }
         } catch (error) {}
     }
 
@@ -258,14 +248,20 @@ async function leftClick(currentBot) {
     const entity = getTargetEntity(currentBot);
 
     if (entity && entity !== currentBot.entity) {
-        currentBot.attack(entity);
+        if (typeof currentBot.attack === 'function') {
+            currentBot.attack(entity);
+        }
 
-        try {
+        if (typeof currentBot.swingArm === 'function') {
             currentBot.swingArm('right');
-        } catch (error) {}
+        }
 
         await wait(450);
         return;
+    }
+
+    if (typeof currentBot.blockAtCursor !== 'function') {
+        throw new Error('Метод blockAtCursor отсутствует');
     }
 
     const block = currentBot.blockAtCursor(5);
@@ -275,9 +271,11 @@ async function leftClick(currentBot) {
         return;
     }
 
-    try {
-        await currentBot.dig(block);
-    } catch (error) {}
+    if (typeof currentBot.dig !== 'function') {
+        throw new Error('Метод dig отсутствует');
+    }
+
+    await currentBot.dig(block);
 }
 
 async function rightClick(currentBot) {
@@ -286,25 +284,27 @@ async function rightClick(currentBot) {
     const entity = getTargetEntity(currentBot);
 
     if (entity && entity !== currentBot.entity) {
-        try {
-            if (typeof currentBot.activateEntity === 'function') {
-                await currentBot.activateEntity(entity);
-            } else {
-                currentBot.activateItem();
-            }
-        } catch (error) {}
+        if (typeof currentBot.activateEntity === 'function') {
+            await currentBot.activateEntity(entity);
+        } else if (typeof currentBot.activateItem === 'function') {
+            currentBot.activateItem();
+        }
 
         await wait(300);
         return;
+    }
+
+    if (typeof currentBot.blockAtCursor !== 'function') {
+        throw new Error('Метод blockAtCursor отсутствует');
     }
 
     const block = currentBot.blockAtCursor(5);
     const heldItem = currentBot.heldItem;
 
     if (!block || block.name === 'air') {
-        try {
+        if (typeof currentBot.activateItem === 'function') {
             currentBot.activateItem();
-        } catch (error) {}
+        }
 
         await wait(300);
         return;
@@ -318,24 +318,25 @@ async function rightClick(currentBot) {
             currentBot.registry &&
             currentBot.registry.blocksByName[heldItem.name]
         ) {
-            await currentBot.placeBlock(
-                block,
-                new Vec3(0, 1, 0)
-            );
+            await currentBot.placeBlock(block, new Vec3(0, 1, 0));
         } else if (heldItem) {
             try {
                 await currentBot.activateBlock(block);
             } catch (error) {}
 
-            currentBot.activateItem();
+            if (typeof currentBot.activateItem === 'function') {
+                currentBot.activateItem();
+            }
         } else {
             await currentBot.activateBlock(block);
         }
 
-        try {
+        if (typeof currentBot.swingArm === 'function') {
             currentBot.swingArm('right');
-        } catch (error) {}
-    } catch (error) {}
+        }
+    } catch (error) {
+        log(null, 'Ошибка ПКМ: ' + error.message);
+    }
 
     await wait(300);
 }
@@ -362,11 +363,7 @@ async function runMouseLoop(button, currentBot, io) {
 
                 if (now - lastMouseError > 3000) {
                     lastMouseError = now;
-
-                    log(
-                        io,
-                        'Ошибка действия мыши: ' + error.message
-                    );
+                    log(io, 'Ошибка действия мыши: ' + error.message);
                 }
 
                 await wait(250);
@@ -400,24 +397,14 @@ function startBot(io, config) {
     const port = Number(config.port);
 
     if (!host || !username) {
-        return {
-            success: false,
-            message: 'Заполни IP и ник'
-        };
+        return { success: false, message: 'Заполни IP и ник' };
     }
 
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        return {
-            success: false,
-            message: 'Неправильный порт'
-        };
+        return { success: false, message: 'Неправильный порт' };
     }
 
-    update(
-        io,
-        'connecting',
-        `Подключаемся к ${host}:${port}...`
-    );
+    update(io, 'connecting', `Подключаемся к ${host}:${port}...`);
 
     try {
         const currentBot = mineflayer.createBot({
@@ -428,31 +415,37 @@ function startBot(io, config) {
             version: '1.21.4'
         });
 
-        // ДИАГНОСТИКА: проверяем методы созданного бота
-        console.log('');
-        console.log('========== MINECLOUD DIAGNOSTICS ==========');
+        console.log('\n========== MINECLOUD DIAGNOSTICS ==========');
         console.log('Package:', require.resolve('@wp2508/mineflayer'));
-        console.log('Bot type:', typeof currentBot);
-        console.log('Bot constructor:', currentBot?.constructor?.name);
-        console.log('setControlState:', typeof currentBot?.setControlState);
-        console.log('clearControlStates:', typeof currentBot?.clearControlStates);
-        console.log('look:', typeof currentBot?.look);
-        console.log('quit:', typeof currentBot?.quit);
-        console.log('end:', typeof currentBot?.end);
-        console.log('===========================================');
-        console.log('');
+
+        for (const method of [
+            'setControlState',
+            'clearControlStates',
+            'look',
+            'quit',
+            'end',
+            'setQuickBarSlot',
+            'dig',
+            'attack',
+            'blockAtCursor',
+            'activateItem',
+            'placeBlock'
+        ]) {
+            console.log(method + ':', typeof currentBot[method]);
+        }
+
+        console.log('===========================================\n');
 
         bot = currentBot;
         viewerStarted = false;
         viewerReady = false;
-
         mousePressed.left = false;
         mousePressed.right = false;
 
         currentBot.once('login', () => {
-            if (bot !== currentBot) return;
-
-            update(io, 'online', 'Бот вошёл на сервер!');
+            if (bot === currentBot) {
+                update(io, 'online', 'Бот вошёл на сервер!');
+            }
         });
 
         currentBot.once('spawn', () => {
@@ -478,24 +471,20 @@ function startBot(io, config) {
                             if (bot !== currentBot) return;
 
                             viewerReady = true;
-
                             log(io, '3D-просмотрщик готов!');
-                            io.emit('viewerReady');
+
+                            if (io) io.emit('viewerReady');
                         })
                         .catch(error => {
                             if (bot !== currentBot) return;
 
                             viewerReady = false;
-                            log(io, 'Ошибка запуска просмотрщика: ' + error.message);
+                            log(io, 'Ошибка просмотрщика: ' + error.message);
                         });
                 } catch (error) {
                     viewerStarted = false;
                     viewerReady = false;
-
-                    log(
-                        io,
-                        'Ошибка просмотрщика: ' + error.message
-                    );
+                    log(io, 'Ошибка просмотрщика: ' + error.message);
                 }
             }
 
@@ -503,38 +492,27 @@ function startBot(io, config) {
             sendVitals(io);
 
             const look = getLookState();
+            if (look && io) io.emit('lookState', look);
 
-            if (look && io) {
-                io.emit('lookState', look);
+            if (currentBot.inventory) {
+                currentBot.inventory.on('updateSlot', () => {
+                    if (bot === currentBot) sendInventory(io);
+                });
             }
 
-            currentBot.inventory.on('updateSlot', () => {
-                if (bot === currentBot) {
-                    sendInventory(io);
-                }
-            });
-
             currentBot.on('heldItemChanged', () => {
-                if (bot === currentBot) {
-                    sendInventory(io);
-                }
+                if (bot === currentBot) sendInventory(io);
             });
 
             currentBot.on('health', () => {
-                if (bot === currentBot) {
-                    sendVitals(io);
-                }
+                if (bot === currentBot) sendVitals(io);
             });
 
             currentBot.on('food', () => {
-                if (bot === currentBot) {
-                    sendVitals(io);
-                }
+                if (bot === currentBot) sendVitals(io);
             });
 
-            if (
-                typeof currentBot.waitForChunksToLoad === 'function'
-            ) {
+            if (typeof currentBot.waitForChunksToLoad === 'function') {
                 currentBot.waitForChunksToLoad()
                     .then(() => {
                         if (bot === currentBot) {
@@ -543,10 +521,7 @@ function startBot(io, config) {
                     })
                     .catch(error => {
                         if (bot === currentBot) {
-                            log(
-                                io,
-                                'Ошибка чанков: ' + error.message
-                            );
+                            log(io, 'Ошибка чанков: ' + error.message);
                         }
                     });
             }
@@ -555,21 +530,23 @@ function startBot(io, config) {
         currentBot.on('kicked', reason => {
             if (bot !== currentBot) return;
 
+            const kickReason = describeReason(reason);
+
+            console.error('[MINECRAFT KICK REASON]', kickReason);
+
             update(
                 io,
                 'error',
-                'Сервер отклонил вход: ' + String(reason)
+                'Сервер отключил бота: ' + kickReason
             );
         });
 
         currentBot.on('error', error => {
             if (bot !== currentBot) return;
 
-            update(
-                io,
-                'error',
-                'Ошибка Minecraft: ' + error.message
-            );
+            console.error('[MINECRAFT ERROR]', error);
+
+            update(io, 'error', 'Ошибка Minecraft: ' + error.message);
         });
 
         currentBot.once('end', reason => {
@@ -577,13 +554,12 @@ function startBot(io, config) {
 
             releaseMouseActions(currentBot);
             closeViewer(currentBot, io);
-
             bot = null;
 
             update(
                 io,
                 'offline',
-                'Соединение закрыто: ' + String(reason || '')
+                'Соединение закрыто: ' + describeReason(reason)
             );
 
             if (io) {
@@ -619,10 +595,15 @@ function controlBot(control, pressed) {
     if (!bot || state !== 'online') return;
     if (!allowedControls.includes(control)) return;
 
+    if (typeof bot.setControlState !== 'function') {
+        console.error('setControlState отсутствует в установленном пакете');
+        return;
+    }
+
     try {
         bot.setControlState(control, Boolean(pressed));
     } catch (error) {
-        console.log('Ошибка управления:', error.message);
+        console.error('Ошибка управления:', error);
     }
 }
 
@@ -636,9 +617,16 @@ function lookBot(data) {
 
     const safePitch = Math.max(-1.5, Math.min(1.5, pitch));
 
+    if (typeof bot.look !== 'function') {
+        console.error('Метод look отсутствует');
+        return;
+    }
+
     try {
         bot.look(yaw, safePitch, true);
-    } catch (error) {}
+    } catch (error) {
+        console.error('Ошибка камеры:', error);
+    }
 }
 
 function selectSlot(slot, io) {
@@ -650,26 +638,34 @@ function selectSlot(slot, io) {
         return;
     }
 
+    if (typeof bot.setQuickBarSlot !== 'function') {
+        log(io, 'ОШИБКА: setQuickBarSlot отсутствует в пакете');
+        return;
+    }
+
     try {
+        log(io, 'Выбираем слот: ' + number);
         bot.setQuickBarSlot(number);
         sendInventory(io);
     } catch (error) {
         log(io, 'Ошибка выбора слота: ' + error.message);
+        console.error(error);
     }
 }
 
 function releaseControls() {
     if (!bot) return;
 
+    if (typeof bot.setControlState !== 'function') {
+        console.error('Невозможно сбросить управление: setControlState отсутствует');
+        return;
+    }
+
     for (const control of allowedControls) {
         try {
             bot.setControlState(control, false);
         } catch (error) {
-            console.log(
-                'Ошибка сброса управления:',
-                control,
-                error.message
-            );
+            console.error('Ошибка сброса управления:', control, error.message);
         }
     }
 }
@@ -687,10 +683,12 @@ function stopBot(io) {
 
     update(io, 'stopping', 'Отключаем бота...');
 
-    for (const control of allowedControls) {
-        try {
-            currentBot.setControlState(control, false);
-        } catch (error) {}
+    if (typeof currentBot.setControlState === 'function') {
+        for (const control of allowedControls) {
+            try {
+                currentBot.setControlState(control, false);
+            } catch (error) {}
+        }
     }
 
     closeViewer(currentBot, io);
